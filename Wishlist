@@ -1,0 +1,16 @@
+This file contains descriptions of features/functions that are priorities for development.
+
+To Do:
+1) Incorporate logic for latching type irrigation valves.
+    Presently, Open_Irr holds an output pin HIGH during an irrigation event which is the intended trigger of a switch to permit toggle of a valve. The valves this was designed for are non-latching meaning they require a constant current to hold open.
+    Some valves are latching, meaning they receive a pulse signal to change their state from ON/OFF. In this way, one pulse (momentary HIGH) will need triggered to open a valve and a second pulse (momentary HIGH) will need sent to close the valve after irrigation time elapses.
+
+2) Implement non-blocking irrigation events instead of using "delay".
+    Should need separate millis trackers for each irrigation group. Presently, Open_Irr uses "delay" while triggering an irrigation event. This is fine, but does not permit multiple irrigation groups to be triggered at once. Ammend so that multiple irrigation groups
+    can recieve irrigation events at the same time. 
+
+3) Expand capability of irrigation permission windows to permit/deny by day of the week / hour of the day
+    There may be times where the water line is not pressurised and an irrigation event would be impossible. Add functionality to check for permission/deny windows for irrigation events / logic to save if an irrigation event was indicated by sensors and not allowed by permission windows (write to error log)
+
+4) Solely day of the week / hour of the day irrigation scheduling for each group
+    If encountering difficulties with sensors, users should have the option to schedule irrigation events solely by day of the week and time of day. Incorporate this feature for each irrigation group.
