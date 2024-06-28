@@ -12,6 +12,7 @@ To Do:
                 Implement option for user selection of valve control
                     i.e., select type of valve (latching or non-latching | normally open or normally closed)
                         Need to add to configuration structures so the system can remember this information (EEPROM) -> example: 'bool latchingValve = false; //track type of valve being used'
+                        Add menu operation to change settings of latchingValve
 
                 Move current relevant menu functions pertaining to irrigation control to the new sub-menu
                     "w" define water threshold values and times
