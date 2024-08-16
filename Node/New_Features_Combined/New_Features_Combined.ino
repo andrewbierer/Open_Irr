@@ -197,7 +197,6 @@ const size_t capacity = 5 * JSON_ARRAY_SIZE(4) + 2 * JSON_OBJECT_SIZE(4) + 4 * J
 ArduinoJson::StaticJsonDocument<capacity> jsonBuffer;                                                       // Hopefully declaring once here is OK
 
 
-
 //EEPROM structure method for storing and retrieving values from eeprom: relevant for variables defined in the menu
 // Note that each EEPROM position can save only one byte of information, i.e. 8-bit numbers 0-255 and leading values (001) ARE NOT INTERPRETABLE
 // but more than one position can be accessed using eeprom.put and eeprom.get with a defined structure
@@ -283,16 +282,6 @@ struct eeprom_struct {
   uint8_t numFields[3]; // Stores the number of fields for seconds, minutes, and hours respectively
 
   uint16_t num_events = 0;
-
-  uint16_t current_event_reference_number = 0;
-
-  // struct valveEventSchedule{
-  // //   uint8_t outputValve[4]; //Array to hold valve number
-  // //   uint8_t valveEventReference[40]; //Array to hold the event reference(s) - a static declaration of 10 references to consider? would be hard to do this dynamically with a limited and fixed eeprom size.
-  // //  //output pin being set high
-  //   uint8_t num_events[4]{ 0 };
-  //   uint16_t schedule[4][10];
-  // } eventReference;
 };
 
 eeprom_struct eeprom_object = {};  //Declare an object with the eeprom_struct structure, access objects as eeprom_object."element of struct without quotes"
@@ -354,10 +343,9 @@ ISR(PCINT0_vect) {
 
 // Initially timeEvaluationConsideration
 struct event{
-  int event_reference_number;
-  // The irrigation groups that the event is scheduled for
-  bool groups[4]; // Makes sense to be here since if we have an array in eeprom, it's more difficult to update indices when removing
-  //int group;
+  //int event_id;
+  //bool groups[4]; // Makes sense to be here since if we have an array in eeprom, it's more difficult to update indices when removing
+  int group;
   // Could use pointers or references instead
   bool recurring;              //false = singular
   // bool permit;                 //false = deny
@@ -367,25 +355,16 @@ struct event{
 
   DateTime* span[2];  //DateTime classes for start and end dates/times for a particular event
 
-  event(uint16_t event_reference_number, bool groups[4], bool recurring, uint8_t event_type, DateTime* span[2]): event_reference_number(event_reference_number), recurring(recurring), event_type(event_type){
-    for (int i = 0; i < 4; i++){
-      this->groups[i] = groups[i];
-    }
+  event(int group, bool recurring, uint8_t event_type, DateTime* span[2]): group(group), recurring(recurring), event_type(event_type){
     this->span[0] = span[0];
     this->span[1] = span[1]; 
   }
 
-  event(): recurring(false), event_type(-1){}
+  event(): group(-1), recurring(false), event_type(-1){}
 
   void print(){
-    Serial.print(F("Group(s): "));
-    for (int i = 0; i < 4; i++){
-      if (groups[i]){
-        Serial.print(i+1);
-        Serial.print(" ");
-      }
-    }
-    Serial.println("");
+    Serial.print(F("Group: "));
+    Serial.println(group);
     Serial.print(F("Recurring: "));
     if (recurring){
       Serial.println("Y");
@@ -759,7 +738,6 @@ void setup() {
   }
 
   read_events_data();
-  eeprom_object.current_event_reference_number = 0; //saved
 
   Serial.println("Initialization Completed"); //saved
 
@@ -781,33 +759,19 @@ void setup() {
 }
 
 void loop() {
-  Serial.println(F("Woke up and checking for upcoming irrigation events."));
-  // Read in current windows for permit, deny, and irrigation
+  // Serial.println(F("Woke up and checking for upcoming irrigation events"));
+  // // Read in current windows for permit, deny, and irrigation
   read_events_data();
-  // Find the minimum amount of time to the next event, delay that long
-
-  check_for_singular_events();
-
-  check_for_recurring_events();
-  // run the events_processing_loop
-  // First, loop through all events, find ones occuring now and fill into array
-  // Right now, we only consider sensor based irrigation and event based irrigation
-  // while (more events)
-  // Get current time
-  // Find events occuring now or right before now
-  // Fill indices in array and process one by one
-  // 
-  // Go through array one by one and process events
-  // irrigation events 
-  // have an array of current events, storing index numbers and fill it using function
-  // 
   // // If within 8 seconds of irrigation event, begin irrigation
-  //check_for_measurement_events();
+  check_for_measurement_events();
   // // // If rtc.now() of next irrigation event - rtc.now() < 8, then stay on, otherwise sleep
-  
+  // // open_valve(1); // saved
+  // // open_valve(2);
+  // // open_valve(3);
+  // // open_valve(4);
   // //Serial.println(F("No irrigation events occuring in the near future, going back to sleep"));
   // Write current windows for permit, deny and irrigation
-  events_menu();
+  //events_menu();
   write_events_data();
   set_alarms();
   updateEEPROM();
@@ -891,6 +855,18 @@ void event_scheduler_menu(){
   // }
   //Exit scope of permit/deny window (event type 2)
 }
+
+
+// bool check_overlap(event_window){
+//   // Loop through window vector and check if seconds_from_start_of_week of event_window is between start and end of something in the vector
+//   // events array is in eeprom object
+//   for (int i = 0; i < eeprom_object.num_events; i++){
+//     if (event_window.seconds_interval[0] < eeprom_object.events[i].seconds_interval[1] && event_window.seconds_interval[1] > eeprom_object.events[i].seconds_interval[0]){
+//       return true;
+//     }
+//   }
+//   return false;
+// }
 
 // void wakeup_routine(){
 //   check_for_events();
@@ -1021,8 +997,6 @@ void timer_based_scheduler_menu(){
   }
 
   Serial.println(F("Timer-based Irrigation Event Scheduling Completed."));
-  print_all_events();
-
 }
 
 void permit_deny_event_scheduler_menu(){
@@ -1110,6 +1084,16 @@ void singular_event_scheduling_menu(int event_type){
   span[0] = new DateTime(years[0], months[0], days[0], hours[0], minutes[0], seconds[0]);
   span[1] = new DateTime(years[1], months[1], days[1], hours[1], minutes[1], seconds[1]);
 
+  // For debugging
+  // Serial.println(F("Start Date:"));
+  // Serial.println(span[0]->year());
+  // Serial.println(span[0]->month());
+  // Serial.println(span[0]->day());
+  // Serial.println(span[0]->hour());
+  // Serial.println(span[0]->minute());
+  // Serial.println(span[0]->second());
+
+
   Serial.println(F("How many irrigation zones should consider this new event?"));
   Serial.println();
   get_integer_input();
@@ -1124,24 +1108,19 @@ void singular_event_scheduling_menu(int event_type){
   // fixed size for now, but might want to change later
   int zones[500];
 
-  bool groups[4];
-  for (int i = 0; i < 4; i++){
-    groups[i] = false;
-  }
-
   for (int i = 0; i < numZones; i++) {
     Serial.print(F("Enter irrigation zone receiving this new singular event."));
     get_integer_input();
-    groups[indata-1] = true;
+    zones[i] = indata;
     //perhaps store an integer array in eeprom for each irrigation zone containing the index number of DateTime scheduling objects stored in a file?.
     //saved
   }
 
-  schedule_new_event(groups, false, event_type, span);
-  events[0]->print();
-  Serial.println(F("Singular window addition(s) completed."));
-  //print_all_events();
+  for (int i = 0; i < numZones; i++){
+    schedule_new_event(zones[i], false, event_type, span);
+  }
 
+  Serial.println(F("Singular window addition(s) completed."));
 }
 
 void recurring_event_scheduler_menu(int event_type){
@@ -1193,55 +1172,26 @@ void recurring_event_scheduler_menu(int event_type){
 
   get_integer_input();
 
-  // May have to look into changing type from int to more specific type
-  int years[2];
-  int months[2];
-  int days[2];
-  int hours[2];
-  int minutes[2];
-  int seconds[2];
-
-  Serial.println(F("Define Start and Stop dates for the first iteration of the new recurring event."));
-  Serial.println(F("The event will repeat weekly on a window matching the day of the week, hour, minute, and second of the initial event window."));
-  //Serial.println(F("For example, say it is 8/16/24 and you want to schedule a recurring event."))
+  Serial.println(F("Define Start and Stop dates for the new recurring event."));
   Serial.println();
-
-
   for (int i = 0; i < 2; i++) {
     if (i == 0) {
       Serial.println(F("Select Start date."));
     } else {
       Serial.println(F("Select End date."));
     }
-
-    Serial.println(F("Enter Year."));
+    Serial.println(F("Enter Year.")); //saved
     get_integer_input();
-    years[i] = indata;
+    //newEvent.eventStartStop[i].year() = indata;
 
     Serial.println(F("Enter Month."));
     get_integer_input();
-    months[i] = indata;
+    //newEvent.eventStartStop[i].month() = indata;
 
     Serial.println(F("Enter Day of Month."));
     get_integer_input();
-    days[i] = indata;
-    
-    Serial.println(F("Enter Hour of Day, considering a 24 hour clock (0 to 23). "));
-    get_integer_input();
-    hours[i] = indata;
-
-    Serial.println(F("Enter Minute of Hour (0 to 59)."));
-    get_integer_input();
-    minutes[i] = indata;
-
-    Serial.println(F("Enter Second of Minute (0 to 59)."));
-    get_integer_input();
-    seconds[i] = indata; //saved
+    //newEvent.eventStartStop[i].day() = indata;
   }
-
-  DateTime* span[2];
-  span[0] = new DateTime(years[0], months[0], days[0], hours[0], minutes[0], seconds[0]);
-  span[1] = new DateTime(years[1], months[1], days[1], hours[1], minutes[1], seconds[1]);
 
   Serial.println(F("How many irrigation zones should receive this new recurring event?"));
   Serial.println();
@@ -1255,19 +1205,11 @@ void recurring_event_scheduler_menu(int event_type){
     //menu();
   }
 
-   bool groups[4];
-  for (int i = 0; i < 4; i++){
-    groups[i] = false;
-  }
-
   for (int i = 0; i < numZones; i++) {
     Serial.println(F("Enter irrigation zone receiving this new recurring event."));
     get_integer_input();
     //perhaps store an integer array in eeprom for each irrigation zone containing the index number of DateTime scheduling objects stored in a file?.
-    groups[indata-1] = true;
   }
-
-  schedule_new_event(groups, true, event_type, span);
 
   //For later Evaluation....
   //calculate the number of seconds elapsed since the beginning of the week
@@ -1276,24 +1218,13 @@ void recurring_event_scheduler_menu(int event_type){
 }
 
 // Functions for managing events
-void schedule_new_event(bool groups[4], bool recurring, uint8_t event_type, DateTime* span[2]){
-  event new_event(eeprom_object.current_event_reference_number, groups, recurring, event_type, span);
+void schedule_new_event(int group, bool recurring, int event_type, DateTime* span[2]){
+  event new_event(group, recurring, event_type, span);
   events[eeprom_object.num_events] = &new_event;
   eeprom_object.num_events++;
-  eeprom_object.current_event_reference_number++;
-  Serial.println(eeprom_object.current_event_reference_number);
-
-  // for (int i = 0; i < 4; i++){
-  //   if (groups[i]){
-  //     eeprom_object.eventReference.schedule[eeprom_object.eventReference.] = 
-  //   }
-  // }
-  
   Serial.println(eeprom_object.num_events);
   //global_num_events;
-  //print_all_events();
-  //Serial.println(events[0]);
-  events[0]->print();
+  print_all_events();
 }
 
 void remove_event(int index){
@@ -1331,10 +1262,7 @@ void read_events_data(){
   int i = 0;
   for (JsonObject o: eventsLog["eventsArray"].as<JsonArray>()){
     events[i] = new event();
-    for (int j = 0; j < 4; j++){
-      events[i]->groups[j] = o["groups"][j];
-    }
-    //events[i]->group = o["group"];
+    events[i]->group = o["group"];
     events[i]->recurring = o["recurring"];
     events[i]->event_type = o["event_type"];
     uint32_t start = o["start_span_seconds"];
@@ -1360,12 +1288,7 @@ void write_events_data(){
   for (int i = 0; i < eeprom_object.num_events; i++){
     events[i]->print();
     JsonObject event = eventsArray.createNestedObject();
-    JsonArray groups = event.createNestedArray("groups");
-    //event["groups"] = events[i]->groups;
-    for (int j = 0; j < 4; j++){
-      groups.add(events[i]->groups[j]);
-      Serial.println(events[i]->groups[j]);
-    }
+    event["group"] = events[i]->group;
     event["recurring"] = events[i]->recurring;
     event["event_type"] = events[i]->event_type;
     event["start_span_seconds"] = events[i]->span[0]->unixtime();
@@ -1382,14 +1305,12 @@ void write_events_data(){
   SD.remove("events.txt");
   writeFileSD("events.txt", json_array);
   //eventsArray.printTo(Serial);
-  serializeJsonPretty(eventsLog, Serial);
-
-  // Prints the file contents, useful for debugging
-  // myfile = SD.open("events.txt", FILE_READ);
-  // while (myfile.available()) {  // read file and print to Serial COM port, Note this will be slow with alot of data due to chip limitations. A desktop with a chip reader is nearly instantaneous.
-  //   Serial.write(myfile.read());
-  // }
-  // myfile.close();
+  //serializeJsonPretty(eventsLog, Serial);
+  myfile = SD.open("events.txt", FILE_READ);
+  while (myfile.available()) {  // read file and print to Serial COM port, Note this will be slow with alot of data due to chip limitations. A desktop with a chip reader is nearly instantaneous.
+    Serial.write(myfile.read());
+  }
+  myfile.close();
 }
 
 void print_all_events(){
@@ -1404,7 +1325,7 @@ void print_all_events(){
 
 void print_events_by_group(int group){
   for (int i = 0; i < eeprom_object.num_events; i++){
-    if (events[i]->groups[i]){
+    if (events[i]->group == group){
       events[i]->print();
     }
   }
@@ -1415,17 +1336,10 @@ int check_for_singular_events(){
   // Get the current time
   DateTime now = rtc.now();                           //needed to get unix time in next line
   // uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
-  TimeSpan t(8);
+  Timespan t(8);
   for (int i = 0; i < eeprom_object.num_events; i++){
-    if (now + t >= events[i]->span[0] && now + t <= events[i]->span[1]){
-      // event is found, just print for now, but eventually  proceed to nonblocking irrigation
-      Serial.print("Upcoming singular event indicated for the following group(s): ");
-      for (int j = 0; j < 4; j++){
-        if (events[i]->groups[j]){
-          Serial.print(j+1);
-          Serial.print(" ");
-        }
-      }
+    if (now + 8 < events[i]->span[1] && now + 8 > events[i]->span[0]){
+
     }
   }
   
@@ -1455,28 +1369,14 @@ int check_for_singular_events(){
 int check_for_recurring_events(){
   // Get the current time
   DateTime now = rtc.now();                           //needed to get unix time in next line
-  uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
+  // uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
+  // Serial.println(current_unix_epoch_time);
 
-  uint32_t num_seconds_in_week = 604800;
-  uint32_t shift = 259200;
-  uint32_t num_seconds_since_week_start = (current_unix_epoch_time - shift) % num_seconds_in_week;
+  // uint32_t num_seconds_in_week = 604800;
+  // uint32_t shift = 259200;
+  // uint32_t num_seconds_since_week_start = (current_unix_epoch_time - shift) % num_seconds_in_week;
+  // Serial.println(num_seconds_since_week_start);
 
-
-  for (int i = 0; i < eeprom_object.num_events; i++){
-    if (events[i]->recurring){
-      uint32_t beginnging_seconds_since_week_start = ( events[i]->span[0]->unixtime() - shift) % num_seconds_in_week;
-      uint32_t ending_seconds_since_week_start = ( events[i]->span[1]->unixtime() - shift) % num_seconds_in_week;
-      if (num_seconds_since_week_start >= beginnging_seconds_since_week_start &&  num_seconds_since_week_start <= ending_seconds_since_week_start){
-        Serial.print("Recurring event indicated for the following group(s): ");
-        for (int j = 0; j < 4; j++){
-          if (events[i]->groups[j]){
-            Serial.print(j+1);
-            Serial.print(" ");
-          }
-        }
-      }
-    }
-  }
   // // Loop through the irrigation windows for each group
   // for (int i = 0; i < 4; i++){
   //   for (int j = 0; j < eeprom_object.num_irrigation_events[i]; j++){
@@ -1491,38 +1391,6 @@ int check_for_recurring_events(){
   
   // See if the current time + 8 lies within a window, since windows are disjoin, it can only be in at most one
   // Windows should be disjoint, it doesn't make sense to have two overlapping windows for the same group, only one thing at once - either irrigating or not
-}
-
-int min_time_to_next_event(){
-  // Get the current time
-  DateTime now = rtc.now();                           //needed to get unix time in next line
-  uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
-  // Serial.println(current_unix_epoch_time);
-
-  uint32_t num_seconds_in_week = 604800;
-  uint32_t shift = 259200;
-  uint32_t num_seconds_since_week_start = (current_unix_epoch_time - shift) % num_seconds_in_week;
-  //Serial.println(num_seconds_since_week_start);
-
-  for (int i = 0; i < eeprom_object.num_events; i++){
-    if (events[i]->recurring){
-      uint32_t beginnging_seconds_since_week_start = ( events[i]->span[0]->unixtime() - shift) % num_seconds_in_week;
-      uint32_t ending_seconds_since_week_start = ( events[i]->span[1]->unixtime() - shift) % num_seconds_in_week;
-      if (num_seconds_since_week_start >= beginnging_seconds_since_week_start &&  num_seconds_since_week_start <= ending_seconds_since_week_start){
-        Serial.print("Recurring event indicated for the following group(s): ");
-        for (int j = 0; j < 4; j++){
-          if (events[i]->groups[j]){
-            Serial.print(j+1);
-            Serial.print(" ");
-          }
-        }
-      }
-    }
-    // The event is singular
-    else{
-
-    }
-  }
 }
 
 bool check_for_measurement_events(){
@@ -1623,6 +1491,231 @@ void print_match_fields_by_unit_of_time(int unit_of_time){
 
 void clear_sd(){
   SD.remove("events.txt");
+}
+
+void test_nonblocking_irrigation(){
+  bool test_mode = true;
+    for (int i = 0; i < 4; i++){
+      group_is_done[i] = false;
+    }
+
+    // Group 1 and 4 will have means below the threshold and have times that guarantee irrgiation
+
+    while (!group_is_done[0] || !group_is_done[1] || !group_is_done[2] || !group_is_done[3]){
+      WM_irrigation_prompt(1, eeprom_object.group_irr_thresholds[0] - 5, eeprom_object.group_irr_thresholds[0], eeprom_object.last_irr_unix_time[0] - eeprom_object.min_time_btwn_irr[0] * 60, false);
+      WM_irrigation_prompt(2, WM_group2_mean, eeprom_object.group_irr_thresholds[1], eeprom_object.last_irr_unix_time[1], false);
+      WM_irrigation_prompt(3, WM_group3_mean, eeprom_object.group_irr_thresholds[2], eeprom_object.last_irr_unix_time[2], false);
+      WM_irrigation_prompt(4, eeprom_object.group_irr_thresholds[0] - 2, eeprom_object.group_irr_thresholds[3], eeprom_object.last_irr_unix_time[3] - eeprom_object.min_time_btwn_irr[3] * 60, false);
+    }
+
+    Serial.println(F("Irrigation done"));
+}
+
+//New prompt for the 4 threshold groups of sensors.
+uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_water_threshold, uint32_t last_irr_time_for_group, bool test_mode) {
+  if (WM_group_num >= 1 && WM_group_num <= 4){
+    if (group_states[WM_group_num-1] == IRRIGATING){
+      // The irrigation time has passed
+      if (millis() - groupMillis[WM_group_num - 1] >= eeprom_object.irr_period[WM_group_num - 1] * 1000){
+            Serial.print(F("Group "));
+            delay(50);
+            Serial.print(WM_group_num);
+            delay(50);
+            Serial.println(F(" done irrigating."));
+            delay(50);
+            Serial.print(F("Irr duration in ms: "));
+            delay(50);
+            long irr_duration_ms = eeprom_object.irr_period[WM_group_num - 1] * 1000;
+            Serial.println(irr_duration_ms);
+            delay(50);
+            if (!test_mode){
+              if (latchingValve){
+                
+              }
+              else{
+                if (WM_group_num == 1){
+                  digitalWrite(in1, LOW);                                //open the respective relay pin, removing power to the pump
+                }
+                else if (WM_group_num == 2){
+                  digitalWrite(in2, LOW);                                //open the respective relay pin, removing power to the pump
+                }
+                else if (WM_group_num == 3){
+                  digitalWrite(in3, LOW);                                //open the respective relay pin, removing power to the pump
+                }
+                else{
+                  digitalWrite(in4, LOW);                                //open the respective relay pin, removing power to the pump
+                }
+              }
+              
+              eeprom_object.last_irr_unix_time[WM_group_num - 1] = rtc.now().unixtime();  //reset the time of last irrigation event for that group
+              new_irr_event = true;  //set boolean true to update eeprom
+
+              // Maybe change function name to print_local_time
+              local_time(eeprom_object.last_irr_unix_time[0]);
+              delay(10);
+
+              irrigation_prompt_string += 'G';
+              irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
+              irrigation_prompt_string += ',';
+              irrigation_prompt_string += WM_group_mean;
+              irrigation_prompt_string += ',';
+
+              for (int i = 0; i <= numChars; i++) {
+                if (local_time_irr_update[i] != '\0') {
+                  irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
+                } else {
+                  break;
+                }
+              }
+              irrigation_prompt_string += ',';
+            }
+            else{
+              Serial.println("CURRENTLY IN TEST MODE: pipe would have closed now.");
+              delay(50);
+            }
+            group_states[WM_group_num-1] = IDLE;
+            group_is_done[WM_group_num-1] = true;
+
+      }
+    }
+    else {
+      if (there is an event){
+        start irrigation //saved
+      }
+      // if sensors indicate the need for a watering event (for each group threshold)-----
+      if (WM_group_mean < eeprom_object.group_irr_thresholds[WM_group_num-1]) {
+        if (group_states[WM_group_num-1] == IDLE){
+          Serial.print(F("Need for watering event indicated for sensor group: "));
+          delay(50);
+          Serial.print(WM_group_num);
+          delay(50);
+          Serial.print(F("  with a mean of: "));
+          delay(50);
+          Serial.println(WM_group_mean);
+          delay(50);
+        }
+        DateTime now = rtc.now();
+        uint32_t current_unix_epoch_time = now.unixtime();
+                                                                      //get current unix epoch time, THIS IS IN SECONDS!!!
+        if (current_unix_epoch_time - last_irr_time_for_group >= (eeprom_object.min_time_btwn_irr[WM_group_num - 1] * 60)) {  //IF the time since last irrigation event is greater than or equal to the minnimum time between irrigation events (minutes*60=seconds) Do not use (minutes*60*1000 = milliseconds) as UNIX time is represented as seconds.
+          // 2022/03/22 Note that this will need changed in future if separate timing differences are specified for each group-----
+          Serial.println(F("The minimum time since last irrigation event has been exceeded. Proceed with irrigation"));
+          delay(50);
+          if (test_mode){
+            Serial.println(F("CURRENTLY IN TEST MODE: pipe would have opened now."));
+            delay(50);
+          }
+          else{
+            if (latchingValve){
+
+            }
+            else{
+              if (WM_group_num == 1){
+                digitalWrite(in1, HIGH);                                   //provide power to pump on relay on respective pin
+              }
+              else if (WM_group_num == 2){
+                digitalWrite(in2, HIGH);                                   //provide power to pump on relay on respective pin
+              }
+              else if (WM_group_num == 3){
+                digitalWrite(in3, HIGH);                                   //provide power to pump on relay on respective pin
+              }
+              else {
+                digitalWrite(in4, HIGH);                                   //provide power to pump on relay on respective pin
+              }
+            }
+
+            
+            Serial.println(F("Pipe opened"));
+            delay(100);
+            delay(50);
+          }
+          groupMillis[WM_group_num - 1] = millis();
+          group_states[WM_group_num-1] = IRRIGATING;
+        }
+        //add condition to not overwater??
+        //irr_count ++;
+        //like incrementing irr_count for throwing flag if X events take place in Y time?
+        //Then do something? or send flag to gateway?
+        else {
+          Serial.print(F("Minimum Time between irrigation events not reached for Group: "));  //declare that the minimum time between irrigations has not elapsed for specified group
+          delay(50);
+          Serial.print(WM_group_num);
+          delay(50);
+          Serial.print(F("  with a mean of: "));
+          delay(50);
+          Serial.println(WM_group_mean);
+          delay(50);
+          group_states[WM_group_num-1] = WAITING;
+
+          if (!test_mode){
+            //Report the group #, group mean, and a unix timestamp of the last irrigation event to the irrigation_prompt_string that gets saved etc.
+            irrigation_prompt_string += 'G';
+            irrigation_prompt_string += WM_group_num;
+            irrigation_prompt_string += ',';
+            irrigation_prompt_string += WM_group_mean;
+            irrigation_prompt_string += ',';
+            //different here than in case above
+            //if minimum time between irrigations has not been exceeded, return the time of last irrigation event for the group
+            local_time(eeprom_object.last_irr_unix_time[WM_group_num]);
+            delay(10);
+
+            for (int i = 0; i <= numChars; i++) {
+              if (local_time_irr_update[i] != '\0') {
+                irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
+              } else {
+                break;
+              }
+            }
+            irrigation_prompt_string += ',';
+          }
+          group_is_done[WM_group_num-1] = true;          
+        }
+      }
+      else {
+        Serial.print(F("Group: "));
+        delay(50);
+        Serial.print(WM_group_num);
+        delay(50);
+        Serial.print(F("  Mean: "));
+        delay(50);
+        Serial.print(WM_group_mean);
+        delay(50);
+        Serial.print(F(", Threshold water content of "));
+        delay(50);
+        Serial.print(eeprom_object.group_irr_thresholds[0]);
+        delay(50);
+        Serial.println(F("  has not been exceeded."));
+        delay(50);
+        if (!test_mode){
+          //New print routine to add to the irrigation_prompt_string even when water threshold has not been reached
+          //and min time has not elapsed
+          irrigation_prompt_string += 'G';           //This is looped through for each group
+          irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
+          irrigation_prompt_string += ',';
+          irrigation_prompt_string += WM_group_mean;
+          irrigation_prompt_string += ',';
+
+          local_time(eeprom_object.last_irr_unix_time[WM_group_num-1]);
+          delay(10);
+
+          for (int i = 0; i <= numChars; i++) {
+            if (local_time_irr_update[i] != '\0') {
+              irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
+            } else {
+              break;
+            }
+          }
+
+          irrigation_prompt_string += ',';
+        }
+        group_is_done[WM_group_num-1] = true;
+      }
+    }
+  }
+  else {
+    Serial.println(F("Undefined Group number..."));
+    delay(50);
+  }  
 }
 
 //[10:51 AM] Bierer, Andrew - REE-ARS
