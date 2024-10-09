@@ -179,6 +179,11 @@ String irrigation_prompt_string = "";
 String temperature_string = "";
 float Temp;
 
+bool group1_done;
+bool group2_done;
+bool group3_done;
+bool group4_done;
+
 //Define Error Log Structure//
 struct error_log_struct {  // was typedef struct {}error_log_struct; 7/27/2023
 
@@ -318,6 +323,17 @@ struct eeprom_struct {
 
 eeprom_struct eeprom_object = {};  //Declare an object with the eeprom_struct structure, access objects as eeprom_object."element of struct without quotes"
 
+unsigned long groupMillis[4];
+
+enum States {
+  IDLE,
+  WAITING,
+  IRRIGATING
+};
+
+States group_states[4];
+
+bool group_is_done[4];
 
 //-----Initialize-----------------------------------------------------
 RTC_DS3231 rtc;
@@ -591,11 +607,32 @@ void water_manager() {
   if (eeprom_object.is_water_manager_on == true) {  //if water manager is active...
     //run the WM_irrigation_prompt routine
     //uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_water_threshold, uint32_t last_irr_time_for_group) -->> format for new 4 threshold groups
+    
+    // states: idle, running, completed,
 
-    WM_irrigation_prompt(1, WM_group1_mean, eeprom_object.group_irr_thresholds[0], eeprom_object.last_irr_unix_time[0]);
-    WM_irrigation_prompt(2, WM_group2_mean, eeprom_object.group_irr_thresholds[1], eeprom_object.last_irr_unix_time[1]);
-    WM_irrigation_prompt(3, WM_group3_mean, eeprom_object.group_irr_thresholds[2], eeprom_object.last_irr_unix_time[2]);
-    WM_irrigation_prompt(4, WM_group4_mean, eeprom_object.group_irr_thresholds[3], eeprom_object.last_irr_unix_time[3]);
+    enum class WaterManagerStates {IDLE, RUNNING};
+
+    WaterManagerStates groupStates[4];
+
+    for (int i = 0; i < 4; i++){
+      groupStates[i] = WaterManagerStates::IDLE;
+    }
+    // want to run the following function on all groups
+
+    for (int i = 0; i < 4; i++){
+      group_is_done[i] = false;
+    }
+
+    while (!group_is_done[0] || !group_is_done[1] || !group_is_done[2] || !group_is_done[3]){
+      WM_irrigation_prompt(1, WM_group1_mean, eeprom_object.group_irr_thresholds[0], eeprom_object.last_irr_unix_time[0], false);
+      WM_irrigation_prompt(2, WM_group2_mean, eeprom_object.group_irr_thresholds[1], eeprom_object.last_irr_unix_time[1], false);
+      WM_irrigation_prompt(3, WM_group3_mean, eeprom_object.group_irr_thresholds[2], eeprom_object.last_irr_unix_time[2], false);
+      WM_irrigation_prompt(4, WM_group4_mean, eeprom_object.group_irr_thresholds[3], eeprom_object.last_irr_unix_time[3], false);
+      isFirstRun = false;
+    }
+
+
+    
 
     //Probably not needed with updateEEPROM function call 7/21/2023
     // if (new_irr_event) {  //check global bool modifed in WM_irrigation_prompt if a new irrigation event has occured.
@@ -1406,6 +1443,7 @@ void menu() {
     Serial.print(F("Minimum time between irrigation events (in minutes): "));
     Serial.println(eeprom_object.min_time_btwn_irr[q]);
 
+    // Probably add the unit
     Serial.print(F("Duration of irrigation events: "));
     Serial.println(eeprom_object.irr_period[q]);
 
@@ -2072,6 +2110,176 @@ void check_menu() {
 }
 
 
+// Need states idle or runnign for each group, need to move millis tracker out of threshold check since it could not be run if plants already watered beyond threshold and then could keep watering
+
+// States for groups: IDLE, IRRIGATING, WAITING
+
+// Initially, all 4 groups are IDLE. If both the sensors indicate the need for a watering event and the minimum time has been passed,
+// the group gets changed to the IRRIGATING state. If the sensors indicate a watering event, but the minimum time has not passed, teh group is WAITING.
+
+
+// Logic: First check if the group number is valid. If it is, then check if the group is IRRIGATING. If it is, then look at the millis tracker.
+// Otherwise, check the sensors. If the sensors indicate a watering event, check the minimum time. If minimum time
+// Has been exceeded, set the group to IRRIGATING and start irrigation. Otherwise, if it was idle set the state to waiting and print the
+// waiting output.
+
+//New prompt for the 4 threshold groups of sensors.
+uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_water_threshold, uint32_t last_irr_time_for_group, bool test_mode) {
+  if (WM_group_num >= 1 && WM_group_num <= 4){
+    if (group_states[WM_group_num-1] == IRRIGATING){
+      // The irrigation time has passed
+      if (millis() - groupMillis[WM_group_num - 1] >= eeprom_object.irr_period[WM_group_num - 1] * 1000){
+            Serial.print(F("Irr duration in ms: "));
+            long irr_duration_ms = eeprom_object.irr_period[WM_group_num - 1] * 1000;
+            Serial.println(irr_duration_ms);
+            if (!test_mode){
+              digitalWrite(in1, LOW);                                //open the respective relay pin, removing power to the pump
+              eeprom_object.last_irr_unix_time[WM_group_num - 1] = rtc.now().unixtime();  //reset the time of last irrigation event for that group
+              new_irr_event = true;  //set boolean true to update eeprom
+
+              // Maybe change function name to print_local_time
+              local_time(eeprom_object.last_irr_unix_time[0]);
+              delay(10);
+
+              irrigation_prompt_string += 'G';
+              irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
+              irrigation_prompt_string += ',';
+              irrigation_prompt_string += WM_group_mean;
+              irrigation_prompt_string += ',';
+
+              for (int i = 0; i <= numChars; i++) {
+                if (local_time_irr_update[i] != '\0') {
+                  irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
+                } else {
+                  break;
+                }
+              }
+              irrigation_prompt_string += ',';
+            }
+            else{
+              Serial.print("CURRENTLY IN TEST MODE: pipe would have closed now.");
+            }
+            
+            group_states[WM_group_num-1] = IDLE;
+            group_is_done[WM_group_num-1] = true;
+      }
+    }
+    else {
+      // if sensors indicate the need for a watering event (for each group threshold)-----
+      if (WM_group_mean < eeprom_object.group_irr_thresholds[WM_group_num-1]) {
+        if (group_states[WM_group_num-1] == IDLE){
+          Serial.print(F("Need for watering event indicated for sensor group: "));
+          Serial.print(WM_group_num);
+          Serial.print(F("  with a mean of: "));
+          Serial.println(WM_group_mean);
+        }
+        DateTime now = rtc.now();                                                                                             //needed to get unix time in next line
+        uint32_t current_unix_epoch_time = now.unixtime();
+                                                                      //get current unix epoch time, THIS IS IN SECONDS!!!
+        if (current_unix_epoch_time - last_irr_time_for_group >= (eeprom_object.min_time_btwn_irr[WM_group_num - 1] * 60)) {  //IF the time since last irrigation event is greater than or equal to the minnimum time between irrigation events (minutes*60=seconds) Do not use (minutes*60*1000 = milliseconds) as UNIX time is represented as seconds.
+          // 2022/03/22 Note that this will need changed in future if separate timing differences are specified for each group-----
+          Serial.println(F("The minimum time since last irrigation event has been exceeded. Proceed with irrigation"));
+          if (test_mode){
+            Serial.println(F("CURRENTLY IN TEST MODE: pipe would have opened now."));
+          }
+          else{
+            digitalWrite(in1, HIGH);                                   //provide power to pump on relay on respective pin
+          }
+          groupMillis[WM_group_num - 1] = millis();
+          group_states[WM_group_num-1] == IRRIGATING;
+        }
+        //add condition to not overwater??
+        //irr_count ++;
+        //like incrementing irr_count for throwing flag if X events take place in Y time?
+        //Then do something? or send flag to gateway?
+        else {
+          Serial.print(F("Minimum Time between irrigation events not reached for Group: "));  //declare that the minimum time between irrigations has not elapsed for specified group
+          Serial.print(WM_group_num);
+          Serial.print(F("  with a mean of: "));
+          Serial.println(WM_group_mean);
+          group_states[WM_group_num-1] == WAITING;
+
+          if (!test_mode){
+            //Report the group #, group mean, and a unix timestamp of the last irrigation event to the irrigation_prompt_string that gets saved etc.
+            irrigation_prompt_string += 'G';
+            irrigation_prompt_string += WM_group_num;
+            irrigation_prompt_string += ',';
+            irrigation_prompt_string += WM_group_mean;
+            irrigation_prompt_string += ',';
+            //different here than in case above
+            //if minimum time between irrigations has not been exceeded, return the time of last irrigation event for the group
+            local_time(eeprom_object.last_irr_unix_time[WM_group_num]);
+            delay(10);
+
+            for (int i = 0; i <= numChars; i++) {
+              if (local_time_irr_update[i] != '\0') {
+                irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
+              } else {
+                break;
+              }
+            }
+            irrigation_prompt_string += ',';
+          }
+          group_is_done[WM_group_num-1] = true;          
+        }
+      }
+      else {
+        Serial.print(F("Group: "));
+        Serial.print(WM_group_num);
+        Serial.print(F("  Mean: "));
+        Serial.print(WM_group_mean);
+        Serial.print(F(", Threshold water content of "));
+        Serial.print(eeprom_object.group_irr_thresholds[0]);
+        Serial.println(F("  has not been exceeded."));
+        if (!test_mode){
+          //New print routine to add to the irrigation_prompt_string even when water threshold has not been reached
+          //and min time has not elapsed
+          irrigation_prompt_string += 'G';           //This is looped through for each group
+          irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
+          irrigation_prompt_string += ',';
+          irrigation_prompt_string += WM_group_mean;
+          irrigation_prompt_string += ',';
+
+          local_time(eeprom_object.last_irr_unix_time[WM_group_num-1]);
+          delay(10);
+
+          for (int i = 0; i <= numChars; i++) {
+            if (local_time_irr_update[i] != '\0') {
+              irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
+            } else {
+              break;
+            }
+          }
+
+          irrigation_prompt_string += ',';
+        }
+        group_is_done[WM_group_num-1] = true;
+      }
+    }
+  }
+  else {
+    Serial.println(F("Undefined Group number..."));
+  }  
+}
+
+void test_nonblocking_irrigation(){
+  bool test_mode = true;
+    for (int i = 0; i < 4; i++){
+      group_is_done[i] = false;
+    }
+
+    // Group 1 and 4 will have means below the threshold and have times that guarantee irrgiation
+
+    while (!group_is_done[0] || !group_is_done[1] || !group_is_done[2] || !group_is_done[3]){
+      WM_irrigation_prompt(1, eeprom_object.group_irr_thresholds[0] - 5, eeprom_object.group_irr_thresholds[0], eeprom_object.last_irr_unix_time[0] - eeprom_object.min_time_btwn_irr[WM_group_num - 1] * 60, test_mode);
+      WM_irrigation_prompt(2, WM_group2_mean, eeprom_object.group_irr_thresholds[1], eeprom_object.last_irr_unix_time[1], test_mode);
+      WM_irrigation_prompt(3, WM_group3_mean, eeprom_object.group_irr_thresholds[2], eeprom_object.last_irr_unix_time[2], test_mode);
+      WM_irrigation_prompt(4, eeprom_object.group_irr_thresholds[0] - 2, eeprom_object.group_irr_thresholds[3], eeprom_object.last_irr_unix_time[3] - eeprom_object.min_time_btwn_irr[WM_group_num - 1] * 60, test_mode);
+      isFirstRun = false;
+    }
+}
+
+
 //-----WM Group means handling------------------                                 //This portion could probably be substantially optimized...
 
 int WM_group_means(uint8_t WM_group_num[], int datasize, uint8_t water_threshold_group) {
@@ -2344,472 +2552,6 @@ int WM_group_means(uint8_t WM_group_num[], int datasize, uint8_t water_threshold
   }
 
   return buffered_group_mean;  //return the requested group_mean
-}
-
-//-----Water manager irrigation prompt--------------------------------------------------------
-
-//New prompt for the 4 threshold groups of sensors.
-uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_water_threshold, uint32_t last_irr_time_for_group) {  // The way this is setup as a function, you just run it for each group, no loop req.
-  uint32_t update_last_irr_time;                                                                                                      //may not be needed with new eeprom code 6/13/2023                                                                                                  // an updated last irr time is needed.
-
-  // if sensors indicate the need for a watering event (for each group threshold)-----
-  if (WM_group_num == 1) {
-    if (WM_group_mean < eeprom_object.group_irr_thresholds[0]) {  //if sensors indicate need for watering event...
-      Serial.print(F("Need for watering event indicated for sensor group: "));
-      Serial.print(WM_group_num);
-      Serial.print(F("  with a mean of: "));
-      Serial.println(WM_group_mean);
-      DateTime now = rtc.now();                                                                                             //needed to get unix time in next line
-      uint32_t current_unix_epoch_time = now.unixtime();                                                                    //get current unix epoch time, THIS IS IN SECONDS!!!
-      if (current_unix_epoch_time - last_irr_time_for_group >= (eeprom_object.min_time_btwn_irr[WM_group_num - 1] * 60)) {  //IF the time since last irrigation event is greater than or equal to the minnimum time between irrigation events (minutes*60=seconds) Do not use (minutes*60*1000 = milliseconds) as UNIX time is represented as seconds.
-
-        // 2022/03/22 Note that this will need changed in future if separate timing differences are specified for each group-----
-        Serial.println(F("The minimum time since last irrigation event has been exceeded. Proceed with irrigation"));
-        digitalWrite(in1, HIGH);                                   //provide power to pump on relay on respective pin
-        delay(eeprom_object.irr_period[WM_group_num - 1] * 1000);  //defined length/duration of irrigation event as seconds (seconds so * 1000)
-        Serial.print(F("Irr duration in ms: "));
-        long dang = eeprom_object.irr_period[WM_group_num - 1] * 1000;
-        Serial.println(dang);
-        digitalWrite(in1, LOW);                                //open the respective relay pin, removing power to the pump
-        eeprom_object.last_irr_unix_time[0] = now.unixtime();  //reset the time of last irrigation event for that group
-        update_last_irr_time = eeprom_object.last_irr_unix_time[0];
-        new_irr_event = true;  //set boolean true to update eeprom
-
-        local_time(eeprom_object.last_irr_unix_time[0]);
-        delay(10);
-
-        irrigation_prompt_string += 'G';
-        irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
-        irrigation_prompt_string += ',';
-        irrigation_prompt_string += WM_group_mean;
-        irrigation_prompt_string += ',';
-
-        for (int i = 0; i <= numChars; i++) {
-          if (local_time_irr_update[i] != '\0') {
-            irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-          } else {
-            break;
-          }
-        }
-        irrigation_prompt_string += ',';
-        //add condition to not overwater??
-        //irr_count ++;
-        //like incrementing irr_count for throwing flag if X events take place in Y time?
-        //Then do something? or send flag to gateway?
-      } else {
-        Serial.print(F("Minimum Time between irrigation events not reached for Group: "));  //declare that the minimum time between irrigations has not elapsed for specified group
-        Serial.print(WM_group_num);
-        Serial.print(F("  with a mean of: "));
-        Serial.println(WM_group_mean);
-
-        //Report the group #, group mean, and a unix timestamp of the last irrigation event to the irrigation_prompt_string that gets saved etc.
-        irrigation_prompt_string += 'G';
-        irrigation_prompt_string += WM_group_num;
-        irrigation_prompt_string += ',';
-        irrigation_prompt_string += WM_group_mean;
-        irrigation_prompt_string += ',';
-        //different here than in case above
-        //if minimum time between irrigations has not been exceeded, return the time of last irrigation event for the group
-        if (WM_group_num == 1) {
-          local_time(eeprom_object.last_irr_unix_time[0]);  //0 indexed
-          delay(10);
-        } else if (WM_group_num == 2) {
-          local_time(eeprom_object.last_irr_unix_time[1]);
-          delay(10);
-        } else if (WM_group_num == 3) {
-          local_time(eeprom_object.last_irr_unix_time[2]);
-          delay(10);
-        } else if (WM_group_num == 4) {
-          local_time(eeprom_object.last_irr_unix_time[3]);
-          delay(10);
-        }
-        for (int i = 0; i <= numChars; i++) {
-          if (local_time_irr_update[i] != '\0') {
-            irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-          } else {
-            break;
-          }
-        }
-        irrigation_prompt_string += ',';
-      }
-    } else {
-      Serial.print(F("Group: "));
-      Serial.print(WM_group_num);
-      Serial.print(F("  Mean: "));
-      Serial.print(WM_group_mean);
-      Serial.print(F(", Threshold water content of "));
-      Serial.print(eeprom_object.group_irr_thresholds[0]);
-      Serial.println(F("  has not been exceeded."));
-      //New print routine to add to the irrigation_prompt_string even when water threshold has not been reached
-      //and min time has not elapsed
-      irrigation_prompt_string += 'G';           //This is looped through for each group
-      irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
-      irrigation_prompt_string += ',';
-      irrigation_prompt_string += WM_group_mean;
-      irrigation_prompt_string += ',';
-
-      if (WM_group_num == 1) {
-        local_time(eeprom_object.last_irr_unix_time[0]);
-        delay(10);
-      } else if (WM_group_num == 2) {
-        local_time(eeprom_object.last_irr_unix_time[1]);
-        delay(10);
-      } else if (WM_group_num == 3) {
-        local_time(eeprom_object.last_irr_unix_time[2]);
-        delay(10);
-      } else if (WM_group_num == 4) {
-        local_time(eeprom_object.last_irr_unix_time[3]);
-        delay(10);
-      }
-
-      for (int i = 0; i <= numChars; i++) {
-        if (local_time_irr_update[i] != '\0') {
-          irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-        } else {
-          break;
-        }
-      }
-
-      irrigation_prompt_string += ',';
-    }
-
-  } else if (WM_group_num == 2) {
-    if (WM_group_mean < eeprom_object.group_irr_thresholds[1]) {  //if sensors indicate need for watering event...
-      Serial.print(F("Need for watering event indicated for sensor group: "));
-      Serial.print(WM_group_num);
-      Serial.print(F("  with a mean of: "));
-      Serial.println(WM_group_mean);
-      DateTime now = rtc.now();                                                                                             //needed to get unix time in next line
-      uint32_t current_unix_epoch_time = now.unixtime();                                                                    //get current unix epoch time
-      if (current_unix_epoch_time - last_irr_time_for_group >= (eeprom_object.min_time_btwn_irr[WM_group_num - 1] * 60)) {  //IF the time since last irrigation event is greater than or equal to the minnimum time between irrigation events (minutes*60=seconds) Do not use (minutes*60*1000 = milliseconds) as UNIX time is represented as seconds.
-        Serial.println(F("The minimum time since last irrigation event has been exceeded. Proceed with irrigation"));       //Note that this will need changed in future if separate timing differences are specified for each group...
-        digitalWrite(in2, HIGH);
-        delay(eeprom_object.irr_period[WM_group_num - 1] * 1000);  // 0 indexed *1000 = seconds
-        digitalWrite(in2, LOW);
-        eeprom_object.last_irr_unix_time[1] = now.unixtime();
-        update_last_irr_time = eeprom_object.last_irr_unix_time[1];
-        local_time(eeprom_object.last_irr_unix_time[1]);
-        delay(10);
-
-        new_irr_event = true;  //set boolean true to update eeprom
-
-        irrigation_prompt_string += 'G';
-        irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
-        irrigation_prompt_string += ',';
-        irrigation_prompt_string += WM_group_mean;
-        irrigation_prompt_string += ',';
-
-        for (int i = 0; i <= numChars; i++) {
-          if (local_time_irr_update[i] != '\0') {
-            irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-          } else {
-            break;
-          }
-        }
-        irrigation_prompt_string += ',';
-      } else {
-        Serial.print(F("Minimum Time between irrigation events not reached for Group: "));  //declare that the minimum time between irrigations has not elapsed for specified group
-        Serial.print(WM_group_num);
-        Serial.print(F("  with a mean of: "));
-        Serial.println(WM_group_mean);
-        //Report the group #, group mean, and a unix timestamp of the last irrigation event to the irrigation_prompt_string that gets saved etc.
-        irrigation_prompt_string += 'G';
-        irrigation_prompt_string += WM_group_num;
-        irrigation_prompt_string += ',';
-        irrigation_prompt_string += WM_group_mean;
-        irrigation_prompt_string += ',';
-        //different here than in case above
-        //if minimum time between irrigations has not been exceeded, return the time of last irrigation event for the group
-        if (WM_group_num == 1) {
-          local_time(eeprom_object.last_irr_unix_time[0]);
-          delay(10);
-        } else if (WM_group_num == 2) {
-          local_time(eeprom_object.last_irr_unix_time[1]);
-          delay(10);
-        } else if (WM_group_num == 3) {
-          local_time(eeprom_object.last_irr_unix_time[2]);
-          delay(10);
-        } else if (WM_group_num == 4) {
-          local_time(eeprom_object.last_irr_unix_time[3]);
-          delay(10);
-        }
-        for (int i = 0; i <= numChars; i++) {
-          if (local_time_irr_update[i] != '\0') {
-            irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-          } else {
-            break;
-          }
-        }
-
-        irrigation_prompt_string += ',';
-      }
-    } else {
-      Serial.print(F("Group: "));
-      Serial.print(WM_group_num);
-      Serial.print(F("  Mean: "));
-      Serial.print(WM_group_mean);
-      Serial.print(F(", Threshold water content of "));
-      Serial.print(eeprom_object.group_irr_thresholds[1]);
-      Serial.println(F("  has not been exceeded."));
-      //New print routine to add to the irrigation_prompt_string even when water threshold has not been reached
-      //and min time has not elapsed
-      irrigation_prompt_string += 'G';           //This is looped through for each group
-      irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
-      irrigation_prompt_string += ',';
-      irrigation_prompt_string += WM_group_mean;
-      irrigation_prompt_string += ',';
-
-      if (WM_group_num == 1) {
-        local_time(eeprom_object.last_irr_unix_time[0]);
-        delay(10);
-      } else if (WM_group_num == 2) {
-        local_time(eeprom_object.last_irr_unix_time[1]);
-        delay(10);
-      } else if (WM_group_num == 3) {
-        local_time(eeprom_object.last_irr_unix_time[2]);
-        delay(10);
-      } else if (WM_group_num == 4) {
-        local_time(eeprom_object.last_irr_unix_time[3]);
-        delay(10);
-      }
-
-      for (int i = 0; i <= numChars; i++) {
-        if (local_time_irr_update[i] != '\0') {
-          irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-        } else {
-          break;
-        }
-      }
-
-      irrigation_prompt_string += ',';
-    }
-
-  } else if (WM_group_num == 3) {
-    if (WM_group_mean < eeprom_object.group_irr_thresholds[2]) {  //if sensors indicate need for watering event...
-      Serial.print(F("Need for watering event indicated for sensor group: "));
-      Serial.print(WM_group_num);
-      Serial.print(F("  with a mean of: "));
-      Serial.println(WM_group_mean);
-      DateTime now = rtc.now();                                                                                             //needed to get unix time in next line
-      uint32_t current_unix_epoch_time = now.unixtime();                                                                    //get current unix epoch time
-      if (current_unix_epoch_time - last_irr_time_for_group >= (eeprom_object.min_time_btwn_irr[WM_group_num - 1] * 60)) {  //IF the time since last irrigation event is greater than or equal to the minnimum time between irrigation events (minutes*60=seconds) Do not use (minutes*60*1000 = milliseconds) as UNIX time is represented as seconds.
-        Serial.println(F("The minimum time since last irrigation event has been exceeded. Proceed with irrigation"));       //Note that this will need changed in future if separate timing differences are specified for each group...
-        digitalWrite(in3, HIGH);
-        delay(eeprom_object.irr_period[WM_group_num - 1] * 1000);
-        digitalWrite(in3, LOW);
-        eeprom_object.last_irr_unix_time[2] = now.unixtime();
-        update_last_irr_time = eeprom_object.last_irr_unix_time[2];
-        local_time(eeprom_object.last_irr_unix_time[2]);
-        delay(10);
-
-        new_irr_event = true;  //set boolean true to update eeprom
-
-        irrigation_prompt_string += 'G';
-        irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
-        irrigation_prompt_string += ',';
-        irrigation_prompt_string += WM_group_mean;
-        irrigation_prompt_string += ',';
-
-        for (int i = 0; i <= numChars; i++) {
-          if (local_time_irr_update[i] != '\0') {
-            irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-          } else {
-            break;
-          }
-        }
-
-        irrigation_prompt_string += ',';
-      } else {
-        Serial.print(F("Minimum Time between irrigation events not reached for Group: "));  //declare that the minimum time between irrigations has not elapsed for specified group
-        Serial.print(WM_group_num);
-        Serial.print(F("  with a mean of: "));
-        Serial.println(WM_group_mean);
-        //Report the group #, group mean, and a unix timestamp of the last irrigation event to the irrigation_prompt_string that gets saved etc.
-        irrigation_prompt_string += 'G';
-        irrigation_prompt_string += WM_group_num;
-        irrigation_prompt_string += ',';
-        irrigation_prompt_string += WM_group_mean;
-        irrigation_prompt_string += ',';
-        //different here than in case above
-        //if minimum time between irrigations has not been exceeded, return the time of last irrigation event for the group
-        if (WM_group_num == 1) {
-          local_time(eeprom_object.last_irr_unix_time[0]);
-          delay(10);
-        } else if (WM_group_num == 2) {
-          local_time(eeprom_object.last_irr_unix_time[1]);
-          delay(10);
-        } else if (WM_group_num == 3) {
-          local_time(eeprom_object.last_irr_unix_time[2]);
-          delay(10);
-        } else if (WM_group_num == 4) {
-          local_time(eeprom_object.last_irr_unix_time[3]);
-          delay(10);
-        }
-        for (int i = 0; i <= numChars; i++) {
-          if (local_time_irr_update[i] != '\0') {
-            irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-          } else {
-            break;
-          }
-        }
-        irrigation_prompt_string += ',';
-      }
-    } else {
-      Serial.print(F("Group: "));
-      Serial.print(WM_group_num);
-      Serial.print(F("  Mean: "));
-      Serial.print(WM_group_mean);
-      Serial.print(F(", Threshold water content of "));
-      Serial.print(eeprom_object.group_irr_thresholds[2]);
-      Serial.println(F("  has not been exceeded."));
-      //New print routine to add to the irrigation_prompt_string even when water threshold has not been reached
-      //and min time has not elapsed
-      irrigation_prompt_string += 'G';           //This is looped through for each group
-      irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
-      irrigation_prompt_string += ',';
-      irrigation_prompt_string += WM_group_mean;
-      irrigation_prompt_string += ',';
-
-      if (WM_group_num == 1) {
-        local_time(eeprom_object.last_irr_unix_time[0]);
-        delay(10);
-      } else if (WM_group_num == 2) {
-        local_time(eeprom_object.last_irr_unix_time[1]);
-        delay(10);
-      } else if (WM_group_num == 3) {
-        local_time(eeprom_object.last_irr_unix_time[2]);
-        delay(10);
-      } else if (WM_group_num == 4) {
-        local_time(eeprom_object.last_irr_unix_time[3]);
-        delay(10);
-      }
-
-      for (int i = 0; i <= numChars; i++) {
-        if (local_time_irr_update[i] != '\0') {
-          irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-        } else {
-          break;
-        }
-      }
-
-      irrigation_prompt_string += ',';
-    }
-
-  } else if (WM_group_num == 4) {
-    if (WM_group_mean < eeprom_object.group_irr_thresholds[3]) {  //if sensors indicate need for watering event...
-      Serial.print(F("Need for watering event indicated for sensor group: "));
-      Serial.print(WM_group_num);
-      Serial.print(F("  with a mean of: "));
-      Serial.println(WM_group_mean);
-      DateTime now = rtc.now();                                                                                             //needed to get unix time in next line
-      uint32_t current_unix_epoch_time = now.unixtime();                                                                    //get current unix epoch time
-      if (current_unix_epoch_time - last_irr_time_for_group >= (eeprom_object.min_time_btwn_irr[WM_group_num - 1] * 60)) {  //IF the time since last irrigation event is greater than or equal to the minnimum time between irrigation events (minutes*60=seconds) Do not use (minutes*60*1000 = milliseconds) as UNIX time is represented as seconds.
-        Serial.println(F("The minimum time since last irrigation event has been exceeded. Proceed with irrigation"));       //Note that this will need changed in future if separate timing differences are specified for each group...
-        digitalWrite(in4, HIGH);
-        delay(eeprom_object.irr_period[WM_group_num - 1] * 1000);
-        digitalWrite(in4, LOW);
-        eeprom_object.last_irr_unix_time[3] = now.unixtime();
-        update_last_irr_time = eeprom_object.last_irr_unix_time[3];
-        local_time(eeprom_object.last_irr_unix_time[3]);
-        delay(10);
-
-        new_irr_event = true;  //set boolean true to update eeprom
-
-        irrigation_prompt_string += 'G';
-        irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
-        irrigation_prompt_string += ',';
-        irrigation_prompt_string += WM_group_mean;
-        irrigation_prompt_string += ',';
-
-        for (int i = 0; i <= numChars; i++) {
-          if (local_time_irr_update[i] != '\0') {
-            irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-          } else {
-            break;
-          }
-        }
-
-        irrigation_prompt_string += ',';
-      } else {
-        Serial.print(F("Minimum Time between irrigation events not reached for Group: "));  //declare that the minimum time between irrigations has not elapsed for specified group
-        Serial.print(WM_group_num);
-        Serial.print(F("  with a mean of: "));
-        Serial.println(WM_group_mean);
-        //Report the group #, group mean, and a unix timestamp of the last irrigation event to the irrigation_prompt_string that gets saved etc.
-        irrigation_prompt_string += 'G';
-        irrigation_prompt_string += WM_group_num;
-        irrigation_prompt_string += ',';
-        irrigation_prompt_string += WM_group_mean;
-        irrigation_prompt_string += ',';
-        //different here than in case above
-        //if minimum time between irrigations has not been exceeded, return the time of last irrigation event for the group
-        if (WM_group_num == 1) {
-          local_time(eeprom_object.last_irr_unix_time[0]);
-          delay(10);
-        } else if (WM_group_num == 2) {
-          local_time(eeprom_object.last_irr_unix_time[1]);
-          delay(10);
-        } else if (WM_group_num == 3) {
-          local_time(eeprom_object.last_irr_unix_time[2]);
-          delay(10);
-        } else if (WM_group_num == 4) {
-          local_time(eeprom_object.last_irr_unix_time[3]);
-          delay(10);
-        }
-        for (int i = 0; i <= numChars; i++) {
-          if (local_time_irr_update[i] != '\0') {
-            irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-          } else {
-            break;
-          }
-        }
-
-        irrigation_prompt_string += ',';
-      }
-    } else {
-      Serial.print(F("Group: "));
-      Serial.print(WM_group_num);
-      Serial.print(F("  Mean: "));
-      Serial.print(WM_group_mean);
-      Serial.print(F(", Threshold water content of "));
-      Serial.print(eeprom_object.group_irr_thresholds[3]);
-      Serial.println(F("  has not been exceeded."));
-      //New print routine to add to the irrigation_prompt_string even when water threshold has not been reached
-      //and min time has not elapsed
-      irrigation_prompt_string += 'G';           //This is looped through for each group
-      irrigation_prompt_string += WM_group_num;  //Amend relevant data to string for storage/transmission
-      irrigation_prompt_string += ',';
-      irrigation_prompt_string += WM_group_mean;
-      irrigation_prompt_string += ',';
-
-      if (WM_group_num == 1) {
-        local_time(eeprom_object.last_irr_unix_time[0]);
-        delay(10);
-      } else if (WM_group_num == 2) {
-        local_time(eeprom_object.last_irr_unix_time[1]);
-        delay(10);
-      } else if (WM_group_num == 3) {
-        local_time(eeprom_object.last_irr_unix_time[2]);
-        delay(10);
-      } else if (WM_group_num == 4) {
-        local_time(eeprom_object.last_irr_unix_time[3]);
-        delay(10);
-      }
-
-      for (int i = 0; i <= numChars; i++) {
-        if (local_time_irr_update[i] != '\0') {
-          irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-        } else {
-          break;
-        }
-      }
-
-      irrigation_prompt_string += ',';
-    }
-
-  } else {
-    Serial.println(F("Undefined Group number..."));
-  }
 }
 
 //----print ROM of ds18b20-----------------------------------------------
@@ -3446,6 +3188,10 @@ void updateEEPROM() {
   eeprom_address = 0;                         //clear eeprom_address
   EEPROM.put(eeprom_address, eeprom_object);  //update chip EEPROM if there are any changes from what was saved...
   eeprom_address = 0;                         //clear eeprom_address
+}
+
+void printEndOfDatafile() {
+
 }
 
 //____________________________________________________________________________________________________________________________________
