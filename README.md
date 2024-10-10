@@ -3,6 +3,9 @@ USDA-ARS Appalachian Fruit Research Station
 
 This repository contains the documentation for the Open_Irr soil water tension management system.
 
+NOTE: This is the beta branch and functionality is NOT guaranteed - in fact, as features are worked on it is likely that this branch will NOT function correctly.
+As features are completed and validated, they will be pushed to the main branch.
+
 Upcoming Features:
 Time Based Event Scheduling:
  - In the previous version, users were not able to schedule events. The device would automatically wake up every 8 seconds and perform sensor based irrigation. In the new version, users will be able to schedule new events on a recurring or non recurring basis. Currently, the plan is to have radio and irrigation events, but there are many possibilities for extension to more general events. This has mainly involved creating new structs for events and reading and storing data on the SD card using the JSON format and Arduino JSON. We also utilize the RTC clock to recognize when events are occurring or about to occur.,
