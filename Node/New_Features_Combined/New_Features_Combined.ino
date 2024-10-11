@@ -33,6 +33,10 @@
 #define in3 14
 #define in4 3
 
+
+
+// ins = [12, 13, 14, 3]
+
 #define MAX_PACKET_LEN (RH_RF95_MAX_MESSAGE_LEN - 1)  //250
 #define MAX_STRING_LEN (MAX_PACKET_LEN * (2 ^ 8))     //64000 bytes, one character in string/packet = 1 byte
 
@@ -56,6 +60,9 @@
 #define NUM_SECONDS_IN_WEEK 7*24*60*60
 
 //-----Declare Global Variables-------------------------------------------
+
+// Instead of macros for in1, in2, etc. we can try a global array called inputs
+int inputs[] = {12, 13, 14, 3};
 
 char filename[] = "000_Data.txt";  //sd card file name, 000 to be replaced by IDnum
 
@@ -131,6 +138,20 @@ String irrigation_prompt_string = "";
 
 String temperature_string = "";
 float Temp;
+
+// char valves[5][15] = {
+//   {"0", "model 1", "link 1", "5", "4", "T", "F", "5", "7", "75", "0.75", "T", "-5", "5", "10"},
+//   {"1", "model 2", "link 2", "7", "2", "F", "T", "3", "10", "65", "0.65", "F", "-3", "7", "11"},
+//   {"0", "model 3", "link 3", "5", "4", "T", "F", "5", "7", "75", "0.75", "T", "-5", "5", "10"},
+//   {"1", "model 4", "link 4", "7", "2", "F", "T", "3", "10", "65", "0.65", "F", "-3", "7", "11"},
+//   {"1", "model 5", "link 5", "7", "2", "F", "T", "3", "10", "65", "0.65", "F", "-3", "7", "11"}
+// };
+
+// array of arrays within arduino JSON
+
+
+
+
 
 
 //Define Error Log Structure//
@@ -282,17 +303,29 @@ struct eeprom_struct {
   uint8_t numFields[3]; // Stores the number of fields for seconds, minutes, and hours respectively
 
   uint16_t num_events = 0;
+
+  int events_queue[50];
+  int events_queue_size = 0;
+
+  //valve valves[10];
+  int current_valve_id = 0;
+  int num_valves = 0;
+  int valve_group_id_lookup[4];
 };
 
 eeprom_struct eeprom_object = {};  //Declare an object with the eeprom_struct structure, access objects as eeprom_object."element of struct without quotes"
 
-unsigned long groupMillis[4];
+unsigned long group_millis[4];
 
-enum States {
+enum event_state {
   IDLE,
   WAITING,
   IRRIGATING
 };
+
+event_state curr_state;
+
+// new states: IDLE, WAITING, IRRIGATING, RADIO, 
 
 States group_states[4];
 
@@ -341,9 +374,165 @@ ISR(PCINT0_vect) {
 
 //eeprom storage/access seems appropriate if cannot be stored on Stack RAM as # of reads on eeprom is ~unlimited with ~100,000 write/erase cycles
 
+// google how to create header file
+// In header
+// Also valve_considerations
+// text file has both user defined and predefined valves
+struct valve{
+  /*
+  int valve_id, power, num_valve_fittings, inrush_current_amps, holding_current_amps, duty_cycle_type, duty_cycle_ratio, min_pressure_psi, max_pressure_psi, resistance_ohms;
+  string model, link;
+  bool idle_state_is_closed, return_to_state_logic_exists, has_three_way_wiring; 
+  */
+  int valve_id;
+  // string doesn't exist with arduino, hopefully 30 characters is enough for these fields
+  char model[30];
+  char link[30];
+  int power;
+  // or is it valve_fittings to indicate something else?
+  int num_valve_fittings;
+  bool latching;
+  bool bidirectional_flow; //saved
+  bool idle_state_is_closed; //*
+  bool return_to_state_logic_exists;
+  int inrush_current_amps;
+  int holding_current_amps;
+  int duty_cycle_type; // 1 = 100, e.g. maybe use enum?
+  int duty_cycle_ratio;
+  bool has_three_way_wiring;
+  int min_pressure_psi;
+  int max_pressure_psi;
+  int resistance_ohms;
+
+  // could be boolean duty_cycle_type for continuous 
+
+  // Can have booleans in functions to track case, return integer for routine
+
+  // if ratio is less than 100%, need to pulse (setting pin high is a pulse, time that is high is as long as pulse duration, one of specifications of the valve, e.g. 50-100 microsecond) put the pin high, then 50 microseconds later, put it low, maybe use millis, repeat same procedure to close, this is latching 
+
+  // non latching is weird edge case, send a pulse every x seconds 
+  // need state machine, get present millis, wait until 
+
+  // duty_cycle_ratio described in terms of Hertz e.g. 50/60 < 100%, 60 is there because of Hertz because of minute
+
+  // look up duty cycle calculator
+
+
+  // important ones
+  // idle_state_is_closed, return_to_state_logic_exists might be needed, duty_cycle_type, duty_cycle_ratio, 
+
+  // have function that evalauates this structure for each valve for each irrigation group
+  // this function looks at important elements that matter, using maybe if elses
+  // return an integer for type of logic, could be 4 or less (routines case statement and then we would apply different procedeures vased on these different values)
+
+  // 100% duty cycle, signal on 100% of time
+  // if duty_cycle_ratio == 100, then we have continuous duty
+
+
+  // duty cycle type
+
+  // continuous duty
+
+  //    need to know normally closed or open for the valve determines whether high pin or low
+  // e.g. if pin 1 is normally open, then we need to hold it high
+
+
+  // return_to_state_logic_exists, does valve remember what state it was before a power outage
+  // Hardware on valve side, should know if valve returns to previous value or starting from scratch
+
+
+  // first pulse
+
+  // on pulse side, need to know pulse frequency
+
+  // some needed to have signal returned every once in a while
+  // needs to keep charging capactior that holds physically open
+  // supplemental power every once in a while to charge capacitor
+
+  // Might need to use alarms with time just a little less than needed to allow for time of processing and sending the pulse
+  // If too confused, could do this one later, not used as much, say not supported yet
+
+  // other case, single pulse changes to state, otherwise no state change
+
+
+  // latching and pulse time most important
+}
+
+// Could try function and feed in valve object and spit out valve type based on data
+// 3/4 booleans and then based on valve object for a group, we determine on case by case basis
+// 4 or 5 different valve types
+// run throuhg valve logic 
+// Watn file with all valves, allow user to enter in new valves
+
+// Whenver we assign valve to group, evaluate once. Put valveLogic array in eeprom
+
+// Let user specify control for new valve type
+
+// valves[i] stores the valve of type i
+
+// extern
+
+// void get_type_by_id(){
+
+// }
+
+// Combine all of these functions into case statement or swithc statemnet
+// This allows to return one integer for routine based on valve
+// Change in1, in2, ... to an array
+
+// Have to apply power to close these valves
+// void close_normally_open_latching_valve(int group){
+//   digitalWrite(inputs[group-1], HIGH); 
+// }
+
+// // Water is not flowing when the valve is held high
+// void open_normally_open_latching_valve(int group){
+//   digitalWrite(inputs[group-1], LOW);
+// }
+
+// void close_normally_open_non_latching_valve(int group){
+  
+// }
+
+// void open_normally_closed_latching_valve(int group){
+//   digitalWrite(inputs[group-1], HIGH);
+// }
+
+// void close_normally_closed_latching_valve(int group){
+//   digitalWrite(inputs[group-1], LOW);
+// }
+
+// Radio events, static events that need to be shceduled
+// Avoid scheduling certain events at the same time
+
+// Might be able to track state of valve, when we pulse and irrigation event not ever, can't schedule another event
+
+// Find times to next pulse for each of the non latching valves that are also irrigating: t1, t2, etc.
+// Find the smallest
+
+
+// If the smallest is within 200ms, then exit current function and pulse quickly
+// void pulse_non_latching_valves(){
+//   // Loop through all the active valves
+
+//   // See if valve is non latching
+
+//   // If time now is less than x ms from next pulse, pulse
+
+// }
+
+// Stores the correct valve for group i (value is the index of the valve in valves)
+// int valveLookupTable[4];
+
+// One option - 
+// Another option - file stuff
+
+
 // Initially timeEvaluationConsideration
 struct event{
-  //int event_id;
+  event_state state;
+  unsigned long event_millis;
+  int event_id;
   //bool groups[4]; // Makes sense to be here since if we have an array in eeprom, it's more difficult to update indices when removing
   int group;
   // Could use pointers or references instead
@@ -436,15 +625,13 @@ struct event{
     Serial.println(span[1]->second());
   }
 
-  // event& operator=(const event& e){
-  //   group = e.group;
-  //   recurring = e.recurring;
-  //   event_type = e.event_type;
-  //   span[0] 
-  // }
 };
 
 event* events[500];
+
+
+
+
 int global_num_events = 0;
 
 void set_alarms(){
@@ -764,6 +951,7 @@ void loop() {
   read_events_data();
   // // If within 8 seconds of irrigation event, begin irrigation
   check_for_measurement_events();
+  events_loop();
   // // // If rtc.now() of next irrigation event - rtc.now() < 8, then stay on, otherwise sleep
   // // open_valve(1); // saved
   // // open_valve(2);
@@ -777,6 +965,133 @@ void loop() {
   updateEEPROM();
   Low_Power_Sleep();
 }
+
+
+
+void events_loop(){
+  // state is initally IDLE
+  curr_state = IDLE;
+
+  reset_events_queue();
+  find_upcoming_events();
+
+  // How to handle pulse type vavles with this loop????
+  while (eeprom_object.events_queue_size > 0){
+    // Timing of the pulse length, not every x ms
+    // Check to make sure the valve is closed
+    // Maybe attach another component that allows verififcant (set one of 4 output pins as input to verify valve state)
+    //maintain_valves_open();
+    for (int i = 0; i < eeprom_object.events_queue_size; i++){
+      // Create a new function that finds an event by id/reference number and returns the pointer and input into this
+      handle_event(get_event_by_id(eeprom_object.events_queue[i]));
+    }
+    // subfunctions will update num_events and we will keep track of events to remove
+    // eventsQueue will be updated after the loop
+    // If a function is non blocking it will move on to next iteration of loop
+    check_for_singular_events();
+    check_for_recurring_events();
+
+    // Could try to error bounds using ms for radio or other precise events
+    // Could use testcase and engineer some edge cases and regular cases and see whether the function works
+    // Could also be measurement events
+
+  }
+
+  // Standard event on all valves 
+  // Start one valve and can start another at same time and later time (e.g. one at noon and another 12:15)
+  // Measuring events testcases (measuring event during irrigation period)
+  // Radio( dummy function that prints to serial terminal that radio is occuring) transmissions during irrigation
+  // Device is on and has to change something, 
+
+  // Could use eeprom OR flash memory
+  // RTC_DATA_ARR int events[50]
+  // DS3231 RTC
+
+  // More mini examples for that
+  // Look into lookup tables and pulse type signaling(one signal to change state or wait for second state to change back for latching)
+  // Valve type logic
+  
+  // Look into state diagrams
+
+
+  // Start rtc, testcases, start working on state table
+  
+  //while (num_queue_events > 0):
+    // go through events queue and if event is occuring now, call functions to handle based on event_type
+    
+
+    // radio functions and some other events may block, but not for long
+    // for irrigation, do it nonblocking
+
+
+}
+
+// Populates eventsQueue with upcoming events
+void find_upcoming_events(){
+  // Get the current time
+  DateTime now = rtc.now();
+  
+  for (int i = 0; i < eeprom_object.num_events; i++){
+    if (events[i]->recurring){
+      uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
+      uint32_t num_seconds_in_week = 604800;
+      uint32_t shift = 259200;
+      uint32_t num_seconds_since_week_start = (current_unix_epoch_time - shift) % num_seconds_in_week;
+
+      uint32_t beginning_seconds_since_week_start = ( events[i]->span[0]->unixtime() - shift) % num_seconds_in_week;
+      uint32_t ending_seconds_since_week_start = ( events[i]->span[1]->unixtime() - shift) % num_seconds_in_week;
+      if (num_seconds_since_week_start >= beginnging_seconds_since_week_start &&  num_seconds_since_week_start <= ending_seconds_since_week_start){
+        // add to events queue
+        // might want to add something to current time to find events very shortly in the future to ensure they don't get skipped
+        // so probably current_time + some_small_offset
+        eeprom_object.events_queue[events_queue_size] = *(events[i]->event_id);
+        eeprom_object.events_queue_size++;
+      }
+    }
+    else{
+      // *(events[i]->span[0]) 
+      // span is a DateTime array, and we have <= comparators we can compare 2 datetime objects
+      // Making sure that the time now is in the range of the span
+      // With arrow notation, we can access data elements of an objects using it's pointer
+      if (now >= *(events[i]->span[0]) && now <= *(events[i]->span[1])){
+        eeprom_object.events_queue[events_queue_size] = *(events[i]->event_id);
+        eeprom_object.events_queue_size++;
+      }
+    }
+  }
+}
+
+void reset_events_queue(){
+  for (int i = 0; i < 50; i++){
+    eeprom_object.events_queue[i] = -1;
+  }
+  eeprom_object.events_queue_size = 0;
+}
+
+event* get_event_by_id(int id){
+  for (int i = 0; i < eeprom_object.num_events; i++){
+    if (events[i]->event_id == id){
+      return event;
+    }
+  }
+}
+
+// example client on microcontroller, while still connected, stuck in client loop, still process time or other events or no?
+// Consider 
+
+// What states can I change to based on current state
+
+void handle_event(event* e){
+  switch(e->event_type):
+    case 0:
+      // Check for radio events, can check state within state
+      // example: taking measurement and checking event time
+      perform_scheduled_irrigation(e);
+    case 4:
+      //radio_event(e);
+
+}
+
 
 //To be placed in menu() -> maybe rename to eventScheduleMenu?
 void events_menu() {
@@ -856,6 +1171,134 @@ void event_scheduler_menu(){
   //Exit scope of permit/deny window (event type 2)
 }
 
+void valve_menu(){
+  Serial.println(F("Valve Configuration Menu."));
+  Serial.println(F("0     <-     Create a new valve configuration"));
+  Serial.println(F("1     <-     Delete an existing valve"));
+
+  get_integer_input();
+
+  int choice = indata;
+
+  if (choice == 0){
+    new_valve_creation_menu();
+  }
+  
+}
+
+void valve_creation_menu(){
+
+  // Select valve, give users option to print out header file, option - my valve isn't listed, append new valve
+  // Once user specifies new valves, store only new valves in txt file on SD card like with events and predefined valves will be within the header file
+  int valve_id, power, num_valve_fittings, inrush_current_amps, holding_current_amps, duty_cycle_type, duty_cycle_ratio, min_pressure_psi, max_pressure_psi, resistance_ohms;
+  string model, link;
+  bool idle_state_is_closed, return_to_state_logic_exists, has_three_way_wiring; 
+
+  char response[20]{ 0 };
+  //byte i = 0;
+
+  Serial.println(F("Enter the valve model:"));
+  while (Serial.available() == 0){};
+  String model = Serial.readString();
+
+  Serial.println(F("Enter the valve link:"));
+  while (Serial.available() == 0){};
+  String link = Serial.readString();
+
+  Serial.println(F("Enter the valve power:"));
+  get_integer_input();
+  power = indata;
+
+  Serial.println(F("Enter the number of valve fittings:"));
+  get_integer_input();
+  num_valve_fittings = indata;
+
+  Serial.println(F("Indicate whether the valve is closed in the idle state (enter 1 for true and 0 for false):"));
+  get_integer_input();
+  if (indata == 0){
+    idle_state_is_closed = false;
+  }
+  else{
+    idle_state_is_closed = true;
+  }
+
+  Serial.println(F("Enter whether the valve returns to regular logic on power loss (enter 1 for true and 0 for false):"));
+  get_integer_input();
+  if (indata == 0){
+    return_to_state_logic_exists = false;
+  }
+  else{
+    return_to_state_logic_exists = true;
+  }
+
+  Serial.println(F("Enter the inrush current in Amps:"));
+  get_integer_input();
+  inrush_current_amps = indata;
+
+  Serial.println(F("Enter the holding current in Amps:"));
+  get_integer_input();
+  holding_current_amps = indata;
+
+  Serial.println(F("Enter the duty cycle type:"));
+  get_integer_input();
+  duty_cycle_type = indata;
+
+  Serial.println(F("Enter the duty cycle ratio:"));
+  get_integer_input();
+  duty_cycle_ratio = indata;
+
+  Serial.println(F("Enter whether there is three way wiring:(Enter 0 for no or 1 for yes)"));
+  if (indata == 0){
+    has_three_way_wiring = false;
+  }
+  else{
+    has_three_way_wiring = true;
+  }
+
+  Serial.println(F("Enter the minimum pressure in PSI:"));
+  get_integer_input();
+  min_pressure_psi = indata;
+
+  Serial.println(F("Enter the maximum pressure in PSI:"));
+  get_integer_input();
+  max_pressure_psi = indata;
+
+  Serial.println(F("Enter the resistance in Ohms:"));
+  get_integer_input();
+  resistance_ohms = indata;
+
+  create_new_valve()
+}
+
+void create_new_valve(string model, string link, int power, int num_valve_fittings, bool idle_state_is_closed, bool return_to_state_logic_exists, int inrush_current_amps, int holding_current_amps, int duty_cycle_type, int duty_cycle_ratio, bool wiring_three_way, int min_pressure_psi, int max_pressure_psi, int resistance_ohms){
+  eeprom_object.valves[eeprom_object.num_valves] = new valve(eeprom_object.current_valve_id, model, link, power, num_valve_fittings, idle_state_is_closed, return_to_state_logic_exists, inrush_current_amps, holding_current_amsp, duty_cycle_type, duty_cycle_ratio, wiring_three_way, min_pressure_psi, max_pressure_psi, resistance_ohms);
+  eeprom_objet.num_valves++;
+  eeprom_object.current_valve_id++;
+}
+
+void remove_valve(int index){
+  delete eeprom_object.valves[index];
+  for (int i = index; i < eeprom_object.num_valves - 1; i++){
+    eeprom_object.valves[i] = eeprom_object.valves[i+1];
+  }
+  eeprom_object.valves[eeprom_object.num_valves-1] = nullptr;
+  eeprom_object.num_valves--;
+}
+
+void remove_all_valves(){
+  while (eeprom_object.num_valves > 0){
+    remove_valve(eeprom_object.num_valves-1);
+  }
+  delete[] eeprom_object.valves;
+  //SD.remove("events.txt");
+}
+
+int evaluateValve(int id){
+  /*
+  if valve type is normally open:
+    hold valve high to close 
+  */
+}
 
 // bool check_overlap(event_window){
 //   // Loop through window vector and check if seconds_from_start_of_week of event_window is between start and end of something in the vector
@@ -872,6 +1315,8 @@ void event_scheduler_menu(){
 //   check_for_events();
 
 // }
+
+// 
 
 
 
@@ -1332,7 +1777,7 @@ void print_events_by_group(int group){
 }
 
 // If an upcoming event is found, return the integer index within the events array, otherwise return -1
-int check_for_singular_events(){
+void check_for_singular_events(){
   // Get the current time
   DateTime now = rtc.now();                           //needed to get unix time in next line
   // uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
@@ -1366,7 +1811,7 @@ int check_for_singular_events(){
   // Windows should be disjoint, it doesn't make sense to have two overlapping windows for the same group, only one thing at once - either irrigating or not
 }
 
-int check_for_recurring_events(){
+void check_for_recurring_events(){
   // Get the current time
   DateTime now = rtc.now();                           //needed to get unix time in next line
   // uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
@@ -1493,22 +1938,129 @@ void clear_sd(){
   SD.remove("events.txt");
 }
 
-void test_nonblocking_irrigation(){
-  bool test_mode = true;
+// Given a pointer to a scheduled irrigation event, this function performs nonblocking irrigation for the specified groups
+void perform_scheduled_irrigation(event* e){
+  Datetime now = rtc.now();
+  if (e->state == IDLE){
     for (int i = 0; i < 4; i++){
-      group_is_done[i] = false;
+      if (groups[i]){
+        open_valve(i);
+      }
     }
 
-    // Group 1 and 4 will have means below the threshold and have times that guarantee irrgiation
 
-    while (!group_is_done[0] || !group_is_done[1] || !group_is_done[2] || !group_is_done[3]){
-      WM_irrigation_prompt(1, eeprom_object.group_irr_thresholds[0] - 5, eeprom_object.group_irr_thresholds[0], eeprom_object.last_irr_unix_time[0] - eeprom_object.min_time_btwn_irr[0] * 60, false);
-      WM_irrigation_prompt(2, WM_group2_mean, eeprom_object.group_irr_thresholds[1], eeprom_object.last_irr_unix_time[1], false);
-      WM_irrigation_prompt(3, WM_group3_mean, eeprom_object.group_irr_thresholds[2], eeprom_object.last_irr_unix_time[2], false);
-      WM_irrigation_prompt(4, eeprom_object.group_irr_thresholds[0] - 2, eeprom_object.group_irr_thresholds[3], eeprom_object.last_irr_unix_time[3] - eeprom_object.min_time_btwn_irr[3] * 60, false);
+
+    //e->event_millis = millis();
+    // global for each group
+    //opened_miliis = millius();
+    // have pin_states and change state 
+    // when the timer is up, set the pin low and return to default state for each of the valves
+    // helper function to pull default state of valve
+    // normally closed vs normally open: closed swithc connection made, singal going through,
+    // the valve is the barrier, different components control the valve such as sensros or switches
+    
+    // close swithc is closing circuit, closing switch opens valves
+    // switch is normally open (the circuit is normally open) in this case
+    // if (groups[0]){
+    //   // say x is the pulse time
+
+    //   // On some solenoids, it permits irrigation and some it stops
+    //   digitalWrite(in1, HIGH);
+    //   // add some valve logic 
+    //   group_states[0] = IRRIGATING;
+    // }
+    // if (groups[1]){
+    //   digitalWrite(in1, HIGH);
+    //   group_states[1] = IRRIGATING;
+    // }
+    // if (groups[2]){
+    //   digitalWrite(in1, HIGH);
+    //   group_states[2] = IRRIGATING;
+    // }
+    // if (groups[3]){
+    //   digitalWrite(in1, HIGH);
+    //   group_states[3] = IRRIGATING;
+    // }
+  }
+  else if (e->state == IRRIGATING && now >= e->span[1]){
+    // The event is over
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, LOW);
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, LOW);
+
+    uint32_t current_unixtime = rtc.now().unixtime();  //reset the time of last irrigation event for that group
+    eeprom_object.last_irr_unix_time[WM_group_num - 1] = rtc.now().unixtime();  //reset the time of last irrigation event for that group
+
+    for (int i = 0; i < 4; i++){
+      if (groups[i]){
+        eeprom_object.last_irr_unix_time[i] = current_unxtime;
+        new_irr_event = true;  //set boolean true to update eeprom
+
+        // Maybe change function name to print_local_time
+        local_time(eeprom_object.last_irr_unix_time[i]);
+        delay(10);
+
+        // Don't know if still want to do this for scheduled events
+        // irrigation_prompt_string += 'G';
+        // irrigation_prompt_string += i;  //Amend relevant data to string for storage/transmission
+        // irrigation_prompt_string += ',';
+
+
+        // irrigation_prompt_string += WM_group_mean;
+        // irrigation_prompt_string += ',';
+
+        // for (int i = 0; i <= numChars; i++) {
+        //   if (local_time_irr_update[i] != '\0') {
+        //     irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
+        //   } else {
+        //     break;
+        //   }
+        // }
+        // irrigation_prompt_string += ',';
+      }
+    }  
+              
+              
+              
+  }
+  
+  
+}
+
+// Uses valve logic to open valve for specific group
+void open_valve(int group){
+  // Retreive valve based on group
+
+  // Call open, close normally open latching, non latching based on type
+}
+
+// Maybe add another piece of hardware that solely pulses the valves. This piece of hardware can be activated by this function or something
+void maintain_valves_open(){
+  for (int i = 0; i < 4; i++){
+    if (!eeprom_object.valves[i].latching){
+      // see if duty cyclce time has passed and need to send anotehr pulse
     }
+  }
+}
 
-    Serial.println(F("Irrigation done"));
+
+void irrigate(){
+  bool test_mode = true;
+  for (int i = 0; i < 4; i++){
+    group_is_done[i] = false;
+  }
+
+  // Group 1 and 4 will have means below the threshold and have times that guarantee irrgiation
+
+  while (!group_is_done[0] || !group_is_done[1] || !group_is_done[2] || !group_is_done[3]){
+    WM_irrigation_prompt(1, eeprom_object.group_irr_thresholds[0] - 5, eeprom_object.group_irr_thresholds[0], eeprom_object.last_irr_unix_time[0] - eeprom_object.min_time_btwn_irr[0] * 60, false);
+    WM_irrigation_prompt(2, WM_group2_mean, eeprom_object.group_irr_thresholds[1], eeprom_object.last_irr_unix_time[1], false);
+    WM_irrigation_prompt(3, WM_group3_mean, eeprom_object.group_irr_thresholds[2], eeprom_object.last_irr_unix_time[2], false);
+    WM_irrigation_prompt(4, eeprom_object.group_irr_thresholds[0] - 2, eeprom_object.group_irr_thresholds[3], eeprom_object.last_irr_unix_time[3] - eeprom_object.min_time_btwn_irr[3] * 60, false);
+  }
+
+  Serial.println(F("Irrigation done"));
 }
 
 //New prompt for the 4 threshold groups of sensors.
@@ -1516,7 +2068,7 @@ uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_
   if (WM_group_num >= 1 && WM_group_num <= 4){
     if (group_states[WM_group_num-1] == IRRIGATING){
       // The irrigation time has passed
-      if (millis() - groupMillis[WM_group_num - 1] >= eeprom_object.irr_period[WM_group_num - 1] * 1000){
+      if (millis() - group_millis[WM_group_num - 1] >= eeprom_object.irr_period[WM_group_num - 1] * 1000){
             Serial.print(F("Group "));
             delay(50);
             Serial.print(WM_group_num);
@@ -1533,6 +2085,7 @@ uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_
                 
               }
               else{
+                // Could try 
                 if (WM_group_num == 1){
                   digitalWrite(in1, LOW);                                //open the respective relay pin, removing power to the pump
                 }
@@ -1629,7 +2182,7 @@ uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_
             delay(100);
             delay(50);
           }
-          groupMillis[WM_group_num - 1] = millis();
+          group_millis[WM_group_num - 1] = millis();
           group_states[WM_group_num-1] = IRRIGATING;
         }
         //add condition to not overwater??

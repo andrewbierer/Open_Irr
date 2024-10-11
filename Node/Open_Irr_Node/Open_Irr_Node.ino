@@ -84,7 +84,7 @@
 #define in2 13
 #define in3 14
 #define in4 3
-
+// saved
 #define MAX_PACKET_LEN (RH_RF95_MAX_MESSAGE_LEN - 1)  //250
 #define MAX_STRING_LEN (MAX_PACKET_LEN * (2 ^ 8))     //64000 bytes, one character in string/packet = 1 byte
 

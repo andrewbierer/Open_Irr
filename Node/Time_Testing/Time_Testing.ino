@@ -426,7 +426,7 @@ struct event{
     Serial.print(F("Month: "));
     Serial.println(span[1]->month());
     Serial.print(F("Day: "));
-    Serial.println(span[1]->year());
+    Serial.println(span[1]->day());
     Serial.print(F("Hour: "));
     Serial.println(span[1]->hour());
     Serial.print(F("Minute: "));
@@ -457,12 +457,6 @@ struct event{
     Serial.println(span[1]->second());
   }
 
-  // event& operator=(const event& e){
-  //   group = e.group;
-  //   recurring = e.recurring;
-  //   event_type = e.event_type;
-  //   span[0] 
-  // }
 };
 
 event* events[500];
@@ -776,6 +770,7 @@ void setup() {
   // // // Serial.println(eeprom_object.latchingValve);
   // // // eeprom_object.latchingValve = true;
   // eeprom_object.num_irrigation_events[0]++;
+  write_events_data(); //saved
   updateEEPROM(); //saved
 
 }
@@ -807,7 +802,7 @@ void loop() {
   
   // //Serial.println(F("No irrigation events occuring in the near future, going back to sleep"));
   // Write current windows for permit, deny and irrigation
-  events_menu();
+  //events_menu();
   write_events_data();
   set_alarms();
   updateEEPROM();
@@ -846,6 +841,8 @@ void events_menu() {
       Serial.println(F("Enter the index number of scheduled event to remove."));
       get_integer_input();
       remove_event(indata);
+      Serial.println(F("Updated schedule"));
+      print_all_events();
     }
   }
   else if (indata == 2) {
@@ -1138,7 +1135,6 @@ void singular_event_scheduling_menu(int event_type){
   }
 
   schedule_new_event(groups, false, event_type, span);
-  events[0]->print();
   Serial.println(F("Singular window addition(s) completed."));
   //print_all_events();
 
@@ -1277,11 +1273,10 @@ void recurring_event_scheduler_menu(int event_type){
 
 // Functions for managing events
 void schedule_new_event(bool groups[4], bool recurring, uint8_t event_type, DateTime* span[2]){
-  event new_event(eeprom_object.current_event_reference_number, groups, recurring, event_type, span);
-  events[eeprom_object.num_events] = &new_event;
+  //event new_event(eeprom_object.current_event_reference_number, groups, recurring, event_type, span);
+  events[eeprom_object.num_events] = new event(eeprom_object.current_event_reference_number, groups, recurring, event_type, span);
   eeprom_object.num_events++;
   eeprom_object.current_event_reference_number++;
-  Serial.println(eeprom_object.current_event_reference_number);
 
   // for (int i = 0; i < 4; i++){
   //   if (groups[i]){
@@ -1292,13 +1287,11 @@ void schedule_new_event(bool groups[4], bool recurring, uint8_t event_type, Date
   Serial.println(eeprom_object.num_events);
   //global_num_events;
   //print_all_events();
-  //Serial.println(events[0]);
-  events[0]->print();
 }
 
 void remove_event(int index){
   delete events[index];
-  for (int i = index; i < eeprom_object.num_events; i++){
+  for (int i = index; i < eeprom_object.num_events - 1; i++){
     events[i] = events[i+1];
   }
   events[eeprom_object.num_events-1] = nullptr;
@@ -1309,9 +1302,17 @@ void remove_all_events(){
   while (eeprom_object.num_events > 0){
     remove_event(eeprom_object.num_events-1);
   }
+  delete[] events;
   SD.remove("events.txt");
 }
+ 
+ // saved
+// Clear JSON buffer
+// Put counter in loop to populate array, print size
+// Clear other buffers
 
+// Look into whether writing new file or not
+// Can compare 2 buffers or boolean to see if change
 void read_events_data(){
   Serial.println(F("Reading in events data from file."));
   StaticJsonDocument<10000> eventsLog;
@@ -1356,15 +1357,15 @@ void read_events_data(){
 
 void write_events_data(){
   StaticJsonDocument<10000> eventsLog;
+  // jsonBuffer.clear() or eventsLog.clear()
   JsonArray eventsArray = eventsLog.createNestedArray("eventsArray");
   for (int i = 0; i < eeprom_object.num_events; i++){
-    events[i]->print();
+    //events[i]->print();
     JsonObject event = eventsArray.createNestedObject();
     JsonArray groups = event.createNestedArray("groups");
     //event["groups"] = events[i]->groups;
     for (int j = 0; j < 4; j++){
       groups.add(events[i]->groups[j]);
-      Serial.println(events[i]->groups[j]);
     }
     event["recurring"] = events[i]->recurring;
     event["event_type"] = events[i]->event_type;
@@ -1382,7 +1383,7 @@ void write_events_data(){
   SD.remove("events.txt");
   writeFileSD("events.txt", json_array);
   //eventsArray.printTo(Serial);
-  serializeJsonPretty(eventsLog, Serial);
+  //serializeJsonPretty(eventsLog, Serial);
 
   // Prints the file contents, useful for debugging
   // myfile = SD.open("events.txt", FILE_READ);
@@ -1415,9 +1416,12 @@ int check_for_singular_events(){
   // Get the current time
   DateTime now = rtc.now();                           //needed to get unix time in next line
   // uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
-  TimeSpan t(8);
+  // Apparently putting 5 in here will result in 8 seconds being added?
+  TimeSpan t(5);
+  Serial.print((now + t).timestamp());
   for (int i = 0; i < eeprom_object.num_events; i++){
-    if (now + t >= events[i]->span[0] && now + t <= events[i]->span[1]){
+    //Serial.print(events[i]->span[0].timestamp());
+    if (now + t >= *(events[i]->span[0]) && now + t <= *(events[i]->span[1])){
       // event is found, just print for now, but eventually  proceed to nonblocking irrigation
       Serial.print("Upcoming singular event indicated for the following group(s): ");
       for (int j = 0; j < 4; j++){
