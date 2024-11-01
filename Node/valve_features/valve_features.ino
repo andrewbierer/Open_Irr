@@ -291,6 +291,9 @@ struct eeprom_struct {
   int current_valve_id = 0;
   int num_valves = 0;
   int valve_group_id_lookup[4];
+
+  // valve_procedure_integers[valve_id] = procedure integer for valve with id valve_id
+  int valve_procedure_integers[100];
 };
 
 eeprom_struct eeprom_object = {};  //Declare an object with the eeprom_struct structure, access objects as eeprom_object."element of struct without quotes"
@@ -626,13 +629,88 @@ void setup() {
 
   setup_predefined_valves();
 
-  //serializeJson(predefinedValvesArray, Serial);
+  //predefined_valves_ar
+  //serializeJsonPretty(predefined_valves::, Serial);
+  //serializeJson(predefined_valves_doc, Serial);
   updateEEPROM();
 }
 
 void loop() {
   
 }
+
+int get_valve_procedure(int valve_id){
+  for (JsonObject o: predefined_valves_array){
+    if (o["id"] == valve_id){
+      bool idle_state_normally_closed = o["idle_state_normally_closed"];
+      bool latching = o["latching"];
+      int duty_cycle_ms = o["duty_cycle_ms"];
+      if (idle_state_normally_closed){
+        if (latching){
+          return 1;
+        }
+        else{
+          return 2;
+        }
+      }
+      else{
+        if (latching){
+          return 3;
+        }
+        else{
+          return 4;
+        }
+      }
+    }
+  }  
+}
+
+// Saves valve procedure integers for all valves to EEPROM
+void set_all_valve_integers(){
+  for (JsonObject o: predefined_valves_array){
+      bool idle_state_normally_closed = o["idle_state_normally_closed"];
+      bool latching = o["latching"];
+      int duty_cycle_ms = o["duty_cycle_ms"];
+      int valve_id = o["valve_id"];
+      if (idle_state_normally_closed){
+        if (latching){
+          eeprom_object.valve_procedure_integers[valve_id] = 1;
+        }
+        else{
+          eeprom_object.valve_procedure_integers[valve_id] = 1;
+        }
+      }
+      else{
+        if (latching){
+          eeprom_object.valve_procedure_integers[valve_id] = 1;
+        }
+        else{
+          eeprom_object.valve_procedure_integers[valve_id] = 1;
+        }
+      }
+  }
+}
+
+// void perform_valve_procedure(int procedure){
+//   // idle state normally closed (circuit is closed) and latching
+//   if (procedure == 1){
+//     // can turn 
+//   }
+//   else if (procedure == 2){
+
+//   }
+//   else if (procedure == 3){
+
+//   }
+//   else if (procedure == 4){
+
+//   }
+//   else{
+//     System.println("Invalid procedure");
+//   }
+// }
+
+
 
 // void create_new_valve(string model, string link, int power, int num_valve_fittings, bool idle_state_is_closed, bool return_to_state_logic_exists, int inrush_current_amps, int holding_current_amps, int duty_cycle_type, int duty_cycle_ratio, bool wiring_three_way, int min_pressure_psi, int max_pressure_psi, int resistance_ohms){
 //   eeprom_object.valves[eeprom_object.num_valves] = new valve(eeprom_object.current_valve_id, model, link, power, num_valve_fittings, idle_state_is_closed, return_to_state_logic_exists, inrush_current_amps, holding_current_amsp, duty_cycle_type, duty_cycle_ratio, wiring_three_way, min_pressure_psi, max_pressure_psi, resistance_ohms);
