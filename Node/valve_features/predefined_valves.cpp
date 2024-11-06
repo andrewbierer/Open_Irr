@@ -4,18 +4,26 @@
 
 //ArduinoJson::StaticJsonDocument<200> predefined_valves_doc;
 
+
+JsonDocument jd;
+JsonArray predefined_valves_array = jd.createNestedArray("predefinedValvesArray");
+JsonObject valve0 = predefined_valves_array.createNestedObject();
+JsonObject valve1 = predefined_valves_array.createNestedObject();
+JsonObject valve2 = predefined_valves_array.createNestedObject();
+JsonObject valve3 = predefined_valves_array.createNestedObject();
+JsonObject valve4 = predefined_valves_array.createNestedObject();
+
 void setup_predefined_valves(){
   //json_doc = JsonDocument::to<JsonObject>();
-  JsonObject json_obj = json_doc.to<JsonObject>();
+  //JsonObject json_obj = json_doc.to<JsonObject>();
   //JsonObject predefinedValvesArray = predefinedValvesDoc.createNestedObject("predefinedValvesArray");
-  JsonArray predefined_valves_array = json_obj.createNestedArray("predefinedValvesArray");
+  
   
   //predefinedValvesArray.createNestedArray("valve0");
   //predefinedValvesArray_valve0.add(5000);
 
   //{{"id": 0, "model": "something", ...}, {"id": 1, "model": "something", ...}, {}};
   //predefinedValvesArray = predefinedValvesDoc.to<JsonArray>();
-  JsonObject valve0 = predefined_valves_array.createNestedObject();
   valve0["id"] = 0;
   valve0["model"] = "VALVE-LAT-NPT-0_75";
   valve0["link"] = "https://www.vegetronix.com/Products/g/Valves/VALVE-LAT-NPT-0_75/";
@@ -30,7 +38,6 @@ void setup_predefined_valves(){
   valve0["pressure_max_psi"] = 150;
   valve0["resistance_ohms"] = 5.5;
 
-  JsonObject valve1 = predefined_valves_array.createNestedObject();
   valve1["id"] = 1;
   valve1["model"] = "GCS3052";
   valve1["link"] = "https://www.dripdepot.com/irrigation-valve-with-dc-latching-solenoid-size-three-quarter-inch-fpt";
@@ -45,7 +52,6 @@ void setup_predefined_valves(){
   valve1["pressure_max_psi"] = 145;
   valve1["resistance_ohms"] = 10;
 
-  JsonObject valve2 = predefined_valves_array.createNestedObject();
   valve2["id"] = 2;
   valve2["model"] = "GCS3051";
   valve2["link"] = "https://www.dripdepot.com/irrigation-valve-with-dc-latching-solenoid-size-three-quarter-inch-fpt";
@@ -60,15 +66,14 @@ void setup_predefined_valves(){
   valve2["pressure_max_psi"] = 145;
   valve2["resistance_ohms"] = 3;
 
-  JsonObject valve3 = predefined_valves_array.createNestedObject();
   valve3["id"] = 3;
   valve3["model"] = "BVS6CE-XR22";
   valve3["link"] = "https://www.electricsolenoidvalves.com/1-inch-stainless-steel-motorized-electric-ball-valve-2-wire-auto-return/?gad_source=1&gclid=Cj0KCQjw-uK0BhC0ARIsANQtgGOcgHHqUHF3baPzmg-jInNEEL0i7T6fMIOtIkSZg0ez5QPZPoyaFCcaAs7aEALw_wcB#downloads";
   valve3["power"] = "9-24VAC/VDC";
   valve3["valve_fittings"] = "1NPT";
-  valve3["latching"] = false;
+  valve3["latching"] = true;
   valve3["bidirectional_flow"] = true;
-  valve3["idle_state_normally_closed"] = true;
+  valve3["idle_state_normally_closed"] = false;
   valve3["powerloss_return_to_state_logic"] = true;
   valve3["holding_current_mA"] = 500;
   valve3["duty_cycle_type"] = "continuous";
@@ -78,7 +83,6 @@ void setup_predefined_valves(){
   valve3["pressure_min_psi"] =  0;
   valve3["pressure_max_psi"] = 185;
 
-  JsonObject valve4 = predefined_valves_array.createNestedObject();
   valve4["id"] = 3;
   valve4["model"] = "BVS6CE-XR22";
   valve4["link"] = "https://www.electricsolenoidvalves.com/1-inch-stainless-steel-motorized-electric-ball-valve-2-wire-auto-return/?gad_source=1&gclid=Cj0KCQjw-uK0BhC0ARIsANQtgGOcgHHqUHF3baPzmg-jInNEEL0i7T6fMIOtIkSZg0ez5QPZPoyaFCcaAs7aEALw_wcB#downloads";
@@ -95,6 +99,4 @@ void setup_predefined_valves(){
   valve4["wiring_three_way"] = false;
   valve4["pressure_min_psi"] =  0;
   valve4["pressure_max_psi"] = 185;
-
-  serializeJsonPretty(predefined_valves_array, Serial);
 }

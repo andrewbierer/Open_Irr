@@ -630,8 +630,9 @@ void setup() {
   setup_predefined_valves();
 
   //predefined_valves_ar
-  //serializeJsonPretty(predefined_valves::, Serial);
+  //serializeJsonPretty(predefined_valves_array, Serial);
   //serializeJson(predefined_valves_doc, Serial);
+  Serial.println(get_valve_procedure(3));
   updateEEPROM();
 }
 
@@ -642,9 +643,16 @@ void loop() {
 int get_valve_procedure(int valve_id){
   for (JsonObject o: predefined_valves_array){
     if (o["id"] == valve_id){
+      serializeJsonPretty(o, Serial);
+      //Serial.println(o["id"]);
       bool idle_state_normally_closed = o["idle_state_normally_closed"];
       bool latching = o["latching"];
-      int duty_cycle_ms = o["duty_cycle_ms"];
+      long duty_cycle_ms = o["duty_cycle_ms"];
+
+      // Serial.println(idle_state_normally_closed);
+      // Serial.println(latching);
+      Serial.println(duty_cycle_ms);
+
       if (idle_state_normally_closed){
         if (latching){
           return 1;
