@@ -1218,6 +1218,7 @@ void setRTCInterrupt() {
   PCMSK0 |= (1 << PCINT0);  //set A0/D24/Chippin 37 as PCINT
   PCICR |= (1 << PCIE0);    //enable interrupts on vector 0
 }
+
 void clearRTCInterrupt() {
   PCICR &= (1 << PCIE0);
 }

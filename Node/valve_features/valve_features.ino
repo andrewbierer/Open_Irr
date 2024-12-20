@@ -630,14 +630,138 @@ void setup() {
   setup_predefined_valves();
 
   //predefined_valves_ar
-  //serializeJsonPretty(predefined_valves_array, Serial);
+  serializeJsonPretty(predefined_valves_array, Serial);
   //serializeJson(predefined_valves_doc, Serial);
-  Serial.println(get_valve_procedure(3));
+  //Serial.println(get_valve_procedure(3));
   updateEEPROM();
 }
 
 void loop() {
+
+  // Shouldn't be necessary as of Arduino 7, can still check for overflow with doc.overflow
+  // The json_doc object is predefined_valves.h, might be issues
+  // After user operations are complete, there will be garbage collection to avoid memory leaks
+  //garbage_collect();
+}
+
+void valve_menu(){
+  Serial.println(F("Open_Irr Valve Menu..."));
+  Serial.println();
+
+  Serial.println(F("Make a selection."));
+  Serial.println(F("1    <-     View Current Valves"));
+  Serial.println(F("2    <-     Add New Valve"));
+  Serial.println(F("3    <-     Remove Valve"));
+
+  get_integer_input();  //from existing code using global int "indata"
+
+  int choice = indata;
+  if (choice == 1){
+    print_all_valves();
+  }
+  else if (choice == 2){
+    add_new_valve();
+  }
+  else if (choice == 3){
+    remove_valve();
+  }
+}
+
+void add_new_valve(){
+  String model, link, power, valve_fittings, duty_cycle_type;
+  int duty_cycle_ms, min_pressure_psi, max_pressure_psi;
+  bool latching, idle_state_normally_closed, wiring_three_way;
+  float resistance_ohms;
   
+  JsonObject new_valve = predefined_valves_array.createNestedObject();
+  new_valve["id"] = eeprom_object.current_valve_id;
+
+  Serial.println(F("Enter the model of the valve: "));
+  model = Serial.readString();
+  new_valve["model"] = model;
+
+  Serial.println(F("Enter the link of the valve: "));
+  link = Serial.readString();
+  new_valve["link"] = link;
+
+  Serial.println(F("Enter the power of the valve in DC: "));
+  power = Serial.readString();
+  new_valve["power"] = power;
+
+  Serial.println(F("Enter the fittings of the valve in DC: "));
+  valve_fittings = Serial.readString();
+  new_valve["valve_fittings"] = valve_fittings;
+
+  Serial.println(F("If the valve is latching, enter 1, otherwise enter false: "));
+  get_integer_input();
+  if (indata == 1){
+    latching = true;
+  }
+  else{
+    latching = false;
+  }
+  new_valve["latching"] = latching;
+
+  Serial.println(F("If the idle state is normally closed, enter 1, otherwise enter false: "));
+  get_integer_input();
+  if (indata == 1){
+    idle_state_normally_closed = true;
+  }
+  else{
+    idle_state_normally_closed = false;
+  }
+  new_valve["idle_state_normally_closed"] = idle_state_normally_closed;
+
+
+  Serial.println(F("Enter the duty cycle type: "));
+  duty_cycle_type = Serial.readString();
+  new_valve["duty_cycle_type"] = duty_cycle_type;
+
+  Serial.println(F("Enter the duty cycle time in ms: "));
+  get_integer_input();
+  duty_cycle_ms = indata;
+  new_valve["duty_cycle_ms"] = duty_cycle_ms;
+
+  Serial.println(F("If there is three way wiring, enter 1, otherwise enter 0: "));
+  get_integer_input();
+  if (indata == 1){
+    wiring_three_way = true;
+  }
+  else{
+    wiring_three_way = false;
+  }
+  new_valve["wiring_three_way"] = wiring_three_way;
+
+  Serial.println(F("Enter the minimum pressure in PSI: "));
+  get_integer_input();
+  min_pressure_psi = indata;
+  new_valve["pressure_min_psi"] =  min_pressure_psi;
+
+  Serial.println(F("Enter the maximum pressure in PSI: "));
+  get_integer_input();
+  max_pressure_psi = indata;
+  new_valve["pressure_max_psi"] = max_pressure_psi;
+
+  // Need to use float input
+  Serial.println(F("Enter the maximum pressure in PSI: "));
+  get_integer_input();
+  max_pressure_psi = indata;
+  new_valve["resistance_ohms"] = resistance_ohms;
+  
+  eeprom_object.num_valves++;
+  eeprom_object.current_valve_id++;
+}
+
+void remove_valve(){
+  // https://arduinojson.org/v6/api/jsonarray/remove/
+  // ArduinoJson::Remove causes memory leaks but this might be fixable using the garbage collector?
+
+  Serial.println(F("Enter the index of the valve you want to remove (note predefined valves cannot be removed):"));
+  get_integer_input();
+  int choice = indata;
+
+  predefined_valves_array.remove(choice);
+  eeprom_object.num_valves--;
 }
 
 int get_valve_procedure(int valve_id){
@@ -718,28 +842,82 @@ void set_all_valve_integers(){
 //   }
 // }
 
+void print_all_valves(){
+  serializeJsonPretty(predefined_valves_array, Serial);
+}
 
+void read_valve_data(){
+  Serial.println(F("Reading in valve data from file."));
+  StaticJsonDocument<10000> valveDoc;
+  File valves_file = SD.open("valves.txt", FILE_READ);
+  char buf[10000];
+  valves_file.read(buf, 10000);
+  DeserializationError error = deserializeJson(valveDoc, buf);
 
-// void create_new_valve(string model, string link, int power, int num_valve_fittings, bool idle_state_is_closed, bool return_to_state_logic_exists, int inrush_current_amps, int holding_current_amps, int duty_cycle_type, int duty_cycle_ratio, bool wiring_three_way, int min_pressure_psi, int max_pressure_psi, int resistance_ohms){
-//   eeprom_object.valves[eeprom_object.num_valves] = new valve(eeprom_object.current_valve_id, model, link, power, num_valve_fittings, idle_state_is_closed, return_to_state_logic_exists, inrush_current_amps, holding_current_amsp, duty_cycle_type, duty_cycle_ratio, wiring_three_way, min_pressure_psi, max_pressure_psi, resistance_ohms);
-//   eeprom_objet.num_valves++;
-//   eeprom_object.current_valve_id++;
-// }
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
 
-// void remove_valve(int index){
-//   delete eeprom_object.valves[index];
-//   for (int i = index; i < eeprom_object.num_valves - 1; i++){
-//     eeprom_object.valves[i] = eeprom_object.valves[i+1];
-//   }
-//   eeprom_object.valves[eeprom_object.num_valves-1] = nullptr;
-//   eeprom_object.num_valves--;
-// }
+  for (JsonObject o: valveDoc["userDefinedValves"].as<JsonArray>()){
+    JsonObject user_defined_valve = predefined_valves_array.createNestedObject();
+    user_defined_valve["id"] = o["id"];
+    user_defined_valve["model"] = o["model"];
+    user_defined_valve["link"] = o["link"];
+    user_defined_valve["power"] = o["power"];
+    user_defined_valve["valve_fittings"] = o["valve_fittings"];
+    user_defined_valve["latching"] = o["latching"];
+    user_defined_valve["idle_state_normally_closed"] = o["idle_state_normally_closed"];
+    user_defined_valve["duty_cycle_type"] = o["duty_cycle_type"];
+    user_defined_valve["duty_cycle_ms"] = o["duty_cycle_ms"];
+    user_defined_valve["wiring_three_way"] = o["wiring_three_way"];
+    user_defined_valve["pressure_min_psi"] =  o["pressure_min_psi"];
+    user_defined_valve["pressure_max_psi"] = o["pressure_max_psi"];
+    user_defined_valve["resistance_ohms"] = o["resistance_ohms"];
+  }
+}
 
-// void remove_all_valves(){
-//   while (eeprom_object.num_valves > 0){
-//     remove_valve(eeprom_object.num_valves-1);
-//   }
-//   delete[] eeprom_object.valves;
-//   //SD.remove("events.txt");
-// }
+void write_valve_data(){
+  Serial.println(F("Writing valve data to file."));
+  StaticJsonDocument<10000> valveDoc;
+
+  JsonArray user_defined_valves_array = valveDoc.createNestedArray("userDefinedValves");
+  // Only user defined valves will be written to SD card
+  // Start at inbdex 5 onwards for now, maybe change to a variable in eeprom if possible
+  int i = 0;
+  // Maybe rename predefined_valves_array as it stores both user and predefined valves
+  num_predefined_valves;
+  for (JsonObject o: predefined_valves_array){
+    if (i >= num_predefined_valves()){
+      JsonObject user_defined_valve = user_defined_valves_array.createNestedObject();
+      user_defined_valve["id"] = o["id"];
+      user_defined_valve["model"] = o["model"];
+      user_defined_valve["link"] = o["link"];
+      user_defined_valve["power"] = o["power"];
+      user_defined_valve["valve_fittings"] = o["valve_fittings"];
+      user_defined_valve["latching"] = o["latching"];
+      user_defined_valve["idle_state_normally_closed"] = o["idle_state_normally_closed"];
+      user_defined_valve["duty_cycle_type"] = o["duty_cycle_type"];
+      user_defined_valve["duty_cycle_ms"] = o["duty_cycle_ms"];
+      user_defined_valve["wiring_three_way"] = o["wiring_three_way"];
+      user_defined_valve["pressure_min_psi"] =  o["pressure_min_psi"];
+      user_defined_valve["pressure_max_psi"] = o["pressure_max_psi"];
+      user_defined_valve["resistance_ohms"] = o["resistance_ohms"];
+    }
+    i++;
+  }
+
+  char json_array[10000];  // char array large enough
+  Serial.print(F("Saving new Event as Json..."));
+  // Serial.println();
+  serializeJson(valveDoc, json_array);  //copy the info in the buffer to the array to use writeFile below
+  //serializeJson(eventsLog, Serial);
+  // //Serial.println(s);
+  //writeFileSD("events.txt", json_array);  //filename limit of 13 chars
+  
+  SD.remove("valves.txt");
+  writeFileSD("valves.txt", json_array);
+}
+
 

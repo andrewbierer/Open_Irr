@@ -13,6 +13,8 @@ JsonObject valve2 = predefined_valves_array.createNestedObject();
 JsonObject valve3 = predefined_valves_array.createNestedObject();
 JsonObject valve4 = predefined_valves_array.createNestedObject();
 
+// jd.garbageCollect();
+
 void setup_predefined_valves(){
   //json_doc = JsonDocument::to<JsonObject>();
   //JsonObject json_obj = json_doc.to<JsonObject>();
@@ -100,3 +102,10 @@ void setup_predefined_valves(){
   valve4["pressure_min_psi"] =  0;
   valve4["pressure_max_psi"] = 185;
 }
+
+int num_predefined_valves(){
+  return sizeof(predefined_valves_array)/sizeof(predefined_valves_array[0]);
+}
+// void garbage_collect(){
+  
+// }

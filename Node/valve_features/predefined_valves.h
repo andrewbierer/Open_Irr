@@ -7,10 +7,12 @@
 //JsonObject predefinedValvesArray;
 //extern ArduinoJson::JsonObject predefinedValvesArray;
 //extern ArduinoJson::StaticJsonDocument<200> predefined_valves_doc;
-extern ArduinoJson::JsonDocument json_doc;
+extern ArduinoJson::JsonDocument jd;
 extern ArduinoJson::JsonArray predefined_valves_array;
-
+//extern num_predefined_valves = 5;
 
 extern void setup_predefined_valves();
+extern int num_predefined_valves();
+//extern int garbage_collect();
 
 #endif
