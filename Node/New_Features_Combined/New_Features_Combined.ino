@@ -23,6 +23,8 @@
 #include <ArduinoJson.h>         //Json file format use
 #include <ArduinoJson.hpp>       //Json file format use
 #include <math.h>                //Mathmatical functions
+#include "predefined_valves.h"
+
 
 //-----Assign Pins-------------------------------------------------
 #define LED 15         //LED pin on Moteino Mega board
@@ -122,16 +124,20 @@ char incomingChar[200]{ '\0' };
 
 const byte numChars = 32;  //for reading in character user input
 
-int WM_group1_mean;  //Integer to hold WM_group means. Group 1 to 4 means will be attached to a corresponding relay in pin, 1-4
-int WM_group2_mean;
-int WM_group3_mean;
-int WM_group4_mean;
+// Fixme: Plan to replace with an array
+int wm_group_means[4];
+// int WM_group1_mean;  //Integer to hold WM_group means. Group 1 to 4 means will be attached to a corresponding relay in pin, 1-4
+// int WM_group2_mean;
+// int WM_group3_mean;
+// int WM_group4_mean;
+
 int wm_grace_window = 10;  //Define the tolerance window (+ or - ,in kpa) for removing an individual sensor from the calculation of the group mean. Only triggers if pdiff from raw mean is >= 20.
 bool force_irr = false;
 bool new_irr_event = false;  //set true to write eeprom.object to moteino eeprom, thereby saving the record of the event
 
 char local_time_irr_update[numChars]{ '\0' };  //Empty character array to dump local time stamp from unix time
 
+// Fixme: Clearing all strings to release memory previously, but now want to utilize ArduinoJson
 String data = "";
 String header = "";
 String WM_string = "";
@@ -140,6 +146,7 @@ String irrigation_prompt_string = "";
 String temperature_string = "";
 float Temp;
 
+// Fixme: ArduinoJson might be an easier/more reliable way to handle this
 //Define Error Log Structure//
 struct error_log_struct {  // was typedef struct {}error_log_struct; 7/27/2023
 
@@ -203,6 +210,8 @@ error_log_struct update_error_log;  //globally declared extra to reset the eepro
 const size_t capacity = 5 * JSON_ARRAY_SIZE(4) + 2 * JSON_OBJECT_SIZE(4) + 4 * JSON_OBJECT_SIZE(16) + 100;  // From assessment tool https://arduinojson.org/v6/assistant/
 ArduinoJson::StaticJsonDocument<capacity> jsonBuffer;                                                       // Hopefully declaring once here is OK
 
+char temp_json_data[10000];
+
 
 //EEPROM structure method for storing and retrieving values from eeprom: relevant for variables defined in the menu
 // Note that each EEPROM position can save only one byte of information, i.e. 8-bit numbers 0-255 and leading values (001) ARE NOT INTERPRETABLE
@@ -216,11 +225,13 @@ int eeprom_address = 0;
 
 struct eeprom_struct {
   uint8_t nodeID;                       //nodeID for radio networking
-  uint8_t IDnum;                        //numeric board identifier 0-255
+  // Planned Change: plan to remove this since it's not needed
+  // uint8_t IDnum;                        //numeric board identifier 0-255
   uint8_t gatewayID;                    //gatewayID for radio networking
   char projectID[numChars] = { '\0' };  //Project identifier
 
-  boolean firstTime = true;  //flag for first time for writing to sdcard module
+  // Planned Change: header not needed anymore since we are using JSON
+  // boolean firstTime = true;  //flag for first time for writing to sdcard module
 
   boolean is_water_manager_on;  //flag to initiate drought stress management routine
 
@@ -236,35 +247,48 @@ struct eeprom_struct {
   int fixed_resistor_val;                //The value of the fixed resistor attached in series to the sensor and ground (voltage divider circuit), an unchanged schematic will be 10,000 ohms
   uint8_t num_WM;                        //Define the number of watermark sensors present
 
-  uint8_t WM_group1[16]{ 0 };  //Array to hold mux channel location of WM sensors to average.
-  uint8_t WM_group2[16]{ 0 };
-  uint8_t WM_group3[16]{ 0 };
-  uint8_t WM_group4[16]{ 0 };
+  /*
+  Planned Change
+  In the future, we can add a const called NUM_GROUPS for the array sizing
+  */
+  uint8_t WM_groups[4][16];
+  // uint8_t WM_group1[16]{ 0 };  //Array to hold mux channel location of WM sensors to average.
+  // uint8_t WM_group2[16]{ 0 };
+  // uint8_t WM_group3[16]{ 0 };
+  // uint8_t WM_group4[16]{ 0 };
 
+  /*
+  Planned Change
+  */
   uint8_t num_ds18b20;         //Define the number of ds18b20 temperature sensors present
-  uint8_t ds18b20_sensor0[8];  //Define locations to store ds18b20_sensor_addresses
-  uint8_t ds18b20_sensor1[8];
-  uint8_t ds18b20_sensor2[8];
-  uint8_t ds18b20_sensor3[8];
-  uint8_t ds18b20_sensor4[8];
-  uint8_t ds18b20_sensor5[8];
-  uint8_t ds18b20_sensor6[8];
-  uint8_t ds18b20_sensor7[8];
-  uint8_t ds18b20_sensor8[8];
-  uint8_t ds18b20_sensor9[8];
-  uint8_t ds18b20_sensor10[8];
-  uint8_t ds18b20_sensor11[8];
-  uint8_t ds18b20_sensor12[8];
-  uint8_t ds18b20_sensor13[8];
-  uint8_t ds18b20_sensor14[8];
-  uint8_t ds18b20_sensor15[8];
+  uint8_t ds18b20_sensor_addresses[16][8];
+  // uint8_t ds18b20_sensor0[8];  //Define locations to store ds18b20_sensor_addresses
+  // uint8_t ds18b20_sensor1[8];
+  // uint8_t ds18b20_sensor2[8];
+  // uint8_t ds18b20_sensor3[8];
+  // uint8_t ds18b20_sensor4[8];
+  // uint8_t ds18b20_sensor5[8];
+  // uint8_t ds18b20_sensor6[8];
+  // uint8_t ds18b20_sensor7[8];
+  // uint8_t ds18b20_sensor8[8];
+  // uint8_t ds18b20_sensor9[8];
+  // uint8_t ds18b20_sensor10[8];
+  // uint8_t ds18b20_sensor11[8];
+  // uint8_t ds18b20_sensor12[8];
+  // uint8_t ds18b20_sensor13[8];
+  // uint8_t ds18b20_sensor14[8];
+  // uint8_t ds18b20_sensor15[8];
 
   uint8_t ALARM_1_Interval = 1;  //Set the interval for alarm 1 (wake and run routine), default is 1
 
-  uint8_t n_channels_wm_group1;  //Integer to hold # of channels utilized in each WM_group mean
-  uint8_t n_channels_wm_group2;
-  uint8_t n_channels_wm_group3;
-  uint8_t n_channels_wm_group4;
+  /*
+  Planned Change
+  */
+  uint8_t n_channels_per_wm_group[4];
+  // uint8_t n_channels_wm_group1;  //Integer to hold # of channels utilized in each WM_group mean
+  // uint8_t n_channels_wm_group2;
+  // uint8_t n_channels_wm_group3;
+  // uint8_t n_channels_wm_group4;
 
   bool demo_mode;  //controls trouble shooting demo loop or the real loop
 
@@ -290,6 +314,7 @@ struct eeprom_struct {
 
   uint16_t num_events = 0;
 
+  // The queue would store the IDs of events
   int events_queue[50];
   int events_queue_size = 0;
 
@@ -297,6 +322,7 @@ struct eeprom_struct {
   int current_valve_id = 0;
   int num_valves = 0;
   int valve_group_id_lookup[4];
+
 };
 
 eeprom_struct eeprom_object = {};  //Declare an object with the eeprom_struct structure, access objects as eeprom_object."element of struct without quotes"
@@ -313,9 +339,23 @@ event_state curr_state;
 
 // new states: IDLE, WAITING, IRRIGATING, RADIO, 
 
-States group_states[4];
+event_state group_states[4];
 
 bool group_is_done[4];
+
+// Planned Change: New variables for compile_json
+
+int channel;
+int WM1_CB = 0;  //Holder for WM sensor value in CB/kPa, direction 1
+double WM1_Resistance = 0;
+int global_WM_group_num;
+int global_WM_group_mean;
+
+String global_last_irr_starting_time;
+String global_last_irr_ending_time;
+
+float global_temp_values[16];
+
 
 //-----Initialize-----------------------------------------------------
 RTC_DS3231 rtc;
@@ -480,9 +520,6 @@ struct event{
 };
 
 event* events[500];
-
-
-
 
 int global_num_events = 0;
 
@@ -661,7 +698,6 @@ void charinput() {
 }
 
 void updateEEPROM() {
-
   eeprom_address = 0;                         //clear eeprom_address
   EEPROM.put(eeprom_address, eeprom_object);  //update chip EEPROM if there are any changes from what was saved...
   eeprom_address = 0;                         //clear eeprom_address
@@ -692,6 +728,59 @@ void writeFileSD(const char *path, const char *message) {
   file.close();
 }
 
+void set_radio(){
+  //-----Set initial radio settings
+  delay(10);
+  driver.setFrequency(915.0);
+  delay(10);
+  driver.setTxPower(20, false);
+  delay(10);
+  manager.setThisAddress(eeprom_object.nodeID);  //Set the current address for radio communication in the manager
+  delay(10);
+  manager.setTimeout(2000);  //set timeout period where if an ACK not recieved it will retransmit message Default is 200ms, this will vary based on transmission packet length
+  delay(10);
+}
+
+void check_rtc(){
+  //-----RTC setup-----
+  if (!rtc.begin()) {
+    Serial.println(F("Couldn't find RTC, routine hang up"));
+    eeprom_object.error_log.rtc_struct.rtc_begin_failure = true; // saved
+    eeprom_object.error_log.write_log = true;
+    while (1)
+      ;
+  }
+
+  if (rtc.lostPower()) {
+    Serial.println(F("RTC lost power."));
+    //Note that this might need changed if lostPower = true after a sleep cycle. a conditional test of Oscillator Stop Flag Bit7 in the status register. see this post  https://forum.arduino.cc/t/rtclib-reset-time-power-interrupted/639578/15
+    eeprom_object.error_log.rtc_struct.rtc_lostPower_failure = true;
+    eeprom_object.error_log.write_log = true;
+  }
+}
+
+//------Calc battery voltage (0- ~ 10V) with voltage divider circuit------------- Closed/opened by mosfet with digital input to prevent battery drain.
+float calcbattV() {
+  pinMode(pin_mBatt, OUTPUT);  //Set digital pin as an output to activate the circuit
+  pinMode(pin_battV, INPUT);   //Set the other pin as input to read the voltage
+
+  digitalWrite(pin_mBatt, HIGH);  //Turn the gate of the MOSFET HIGH, closing the circuit
+  delayMicroseconds(500);         //delay time for stabilization
+
+  uint16_t vInt;                 //The raw integer returned by analogRead
+  vInt = analogRead(pin_battV);  //read vInt on analog pin connected where the resistors in the divider circuit meet.
+  digitalWrite(pin_mBatt, LOW);  //Turn the gate of the MOSFET LOW, deactivating the circuit
+
+  float vout = 0.00;
+  float vin = 0.00;
+  float R1 = 10000;  //1st Resistor in divider circuit taking load from battery
+  float R2 = 4700;   //2nd Resistor in divider circuit leading to board GND
+
+  vout = (vInt * ADC_REF_VOLTAGE) / ADC_RESOLUTION;  //voltage modified by divider circuit, voltage at dividing point
+  vin = vout / (R2 / (R1 + R2));                     //Actual voltage coming into the divider circuit, i.e. battery level
+  return vin;
+}
+
 void latchingValveModuleReturnToIdle() {
   //default/idle condition to save on current consumption
  
@@ -708,9 +797,9 @@ void latchingValveModuleReturnToIdle() {
   }
   Serial.println(F("Default/Idle condition to save on current consumption."));
 }
-has context menu
 
 void setup() {
+  // Fixme: Think about only beginning serial if device is connected
   Serial.begin(9600);
 
   Wire.begin();  //enable I2C bus for rtc
@@ -728,7 +817,7 @@ void setup() {
     pinMode(io_pins[i], OUTPUT);
   }
 
-  latchingValveModuleReturnToLow();
+  latchingValveModuleReturnToIdle();
 
   pinMode(WM_path1, OUTPUT);       //WM Sensor Vs or GND
   pinMode(mux_enable, OUTPUT);     //enable or disable the multiplexor, the EN pin on multiplexor
@@ -745,10 +834,20 @@ void setup() {
   //----- check chip EEPROM for stored data and place into "eeprom_object" with the structure of "eeprom_struct" declared earlier
 
   EEPROM.get(eeprom_address, eeprom_object);                                //eeprom_address may be redundant if only writing one eeprom object (i.e. it would always begin at position 0)
-  int datasize_group1 = sizeof(eeprom_object.WM_group1) / sizeof(uint8_t);  //Hold the element length of the WM_group arrays, needs to be after eeprom_objects are read.
-  int datasize_group2 = sizeof(eeprom_object.WM_group2) / sizeof(uint8_t);
-  int datasize_group3 = sizeof(eeprom_object.WM_group3) / sizeof(uint8_t);
-  int datasize_group4 = sizeof(eeprom_object.WM_group4) / sizeof(uint8_t);
+  int datasize_groups[4];
+
+  /*
+  Planned Change
+  */
+
+  for (int i = 0; i < 4; i++){
+    datasize_groups[i] = sizeof(eeprom_object.WM_groups[i]) / sizeof(uint8_t);  //Hold the element length of the WM_group arrays, needs to be after eeprom_objects are read.
+  }
+
+  // int datasize_group1 = sizeof(eeprom_object.WM_group1) / sizeof(uint8_t);  //Hold the element length of the WM_group arrays, needs to be after eeprom_objects are read.
+  // int datasize_group2 = sizeof(eeprom_object.WM_group2) / sizeof(uint8_t);
+  // int datasize_group3 = sizeof(eeprom_object.WM_group3) / sizeof(uint8_t);
+  // int datasize_group4 = sizeof(eeprom_object.WM_group4) / sizeof(uint8_t);
 
   //----- Check SD card
   if (!SD.begin(SD_CS)) {
@@ -762,35 +861,9 @@ void setup() {
 
   */
 
-
-  //-----Set initial radio settings
-  delay(10);
-  driver.setFrequency(915.0);
-  delay(10);
-  driver.setTxPower(20, false);
-  delay(10);
-  manager.setThisAddress(eeprom_object.nodeID);  //Set the current address for radio communication in the manager
-  delay(10);
-  manager.setTimeout(2000);  //set timeout period where if an ACK not recieved it will retransmit message Default is 200ms, this will vary based on transmission packet length
-  delay(10);
-
-
-  //-----RTC setup-----
-  if (!rtc.begin()) {
-    Serial.println(F("Couldn't find RTC, routine hang up"));
-    eeprom_object.error_log.rtc_struct.rtc_begin_failure = true; // saved
-    eeprom_object.error_log.write_log = true;
-    while (1)
-      ;
-  }
-
-  if (rtc.lostPower()) {
-    Serial.println(F("RTC lost power."));
-    //Note that this might need changed if lostPower = true after a sleep cycle. a conditional test of Oscillator Stop Flag Bit7 in the status register. see this post  https://forum.arduino.cc/t/rtclib-reset-time-power-interrupted/639578/15
-    eeprom_object.error_log.rtc_struct.rtc_lostPower_failure = true;
-    eeprom_object.error_log.write_log = true;
-  }
-
+  set_radio();
+  check_rtc();
+  
   read_events_data();
   
   Serial.println("Initialization Completed"); //saved
@@ -811,11 +884,26 @@ void setup() {
 
 void loop() {
   Serial.println(F("Woke up and checking for upcoming irrigation events"));
+  
+  
   // Read in current windows for permit, deny, and irrigation
+  
+  // Reading in the data from JSON
   read_events_data();
+
+  // Comarator to see if JSON has changed (possibly to cut down read/writes)
+  fill_old_events_data();
+
+  // Now we have the events array filled with predefined events
+
   // // If within 8 seconds of irrigation event, begin irrigation
-  check_for_measurement_events();
+  // Planned Change: rename it to check_measurement_match_fields
+
+  // If we have a match field, we need to add a new singular event to events array
+  // Before the next time the device is off, we want these singular events processed
+  
   events_loop();
+
   // // // If rtc.now() of next irrigation event - rtc.now() < 8, then stay on, otherwise sleep
   // // open_valve(1); // saved
   // // open_valve(2);
@@ -825,9 +913,9 @@ void loop() {
   // Write current windows for permit, deny and irrigation
   //events_menu();
 
-  write_events_data();
-  write_valve_data();
-  set_alarm_1_interval();
+  write_data_to_sd();
+  //set_alarm_1_interval();
+  // We could compare old EEPROM data to new data using character array like we did for the events data
   updateEEPROM();
   Low_Power_Sleep();
 }
@@ -839,33 +927,82 @@ void write_data_to_sd(){
 
 void read_data_from_sd(){
   read_valve_data();
-  
+
+}
+
+void readRTC() {
+  DateTime now = rtc.now();
+  secs = now.second();
+  mins = now.minute();
+  hrs = now.hour();
+  days = now.day();
+  mnths = now.month();
+  yrs = now.year();
 }
 
 
+// FIXME: Refactor to avoid global strings
+//-----Print user interpretable time from unix time-----------------------------------------
+void local_time(uint32_t unix_time) {
 
-//-----Menu Routine----------------------------------------------------
-void menu() {
+  byte hold_min;
+  byte hold_sec;
 
-  if (Serial.available() > 0) {
-    Serial.read();  //clear serial input buffer
+  String temp = "";
+  /* //If you just wanted the time printed to serial monitor...
+     Serial.print(month(unix_time));
+    Serial.print(F("/"));
+    Serial.print(day(unix_time));
+    Serial.print(F("/"));
+    Serial.print(year(unix_time));
+    Serial.print(F("  "));
+
+    Serial.print(hour(unix_time));
+    Serial.print(F(":"));
+    hold_min = minute(unix_time);
+    if (hold_min < 10) {
+      Serial.print('0');
+    }
+    Serial.print(hold_min);
+    //Serial.print(minute(unix_time));
+    Serial.print(F(":"));
+    hold_sec = second(unix_time);
+    if (hold_sec < 10) {
+      Serial.print('0');
+    }
+    Serial.print(hold_sec);
+    //Serial.print(second(unix_time));
+  */
+
+
+  byte month_i = month(unix_time);
+  byte day_i = day(unix_time);
+  int year_i = year(unix_time);
+  byte hour_i = hour(unix_time);
+  byte minute_i = minute(unix_time);
+  byte second_i = second(unix_time);
+
+  temp += month_i;
+  temp += '/';
+  temp += day_i;
+  temp += '/';
+  temp += year_i;
+  temp += ' ';
+  temp += hour_i;
+  temp += ':';
+  if (minute_i < 10) {
+    temp += '0';
   }
-
-  itoa(eeprom_object.IDnum, a, 10);  //convert IDnum to character array
-
-  if (eeprom_object.IDnum < 10) {  // for naming filename
-    filename[0] = '0';             // put into filename[] array
-    filename[1] = '0';
-    filename[2] = a[0];
-  } else if (eeprom_object.IDnum < 100) {
-    filename[0] = '0';  // put into filename[] array
-    filename[1] = a[0];
-    filename[2] = a[1];
-  } else {
-    filename[0] = a[0];  // put into filename[] array
-    filename[1] = a[1];
-    filename[2] = a[2];
+  temp += minute_i;
+  temp += ':';
+  if (second_i < 10) {
+    temp += '0';
   }
+  temp += second_i;
+  temp.toCharArray(local_time_irr_update, numChars);  //Update the global irr_update variable
+}
+
+void print_board_info(){
   //print out board information-----
   Serial.println();
   Serial.println(F("Open_Irr: soil water tension management system"));
@@ -880,8 +1017,10 @@ void menu() {
   }
   Serial.println();
 
-  Serial.print(F("Board ID: "));
-  Serial.println(eeprom_object.IDnum);
+  // Planned Change: This will be removed since IDnum will be removed
+  // Serial.print(F("Board ID: "));
+  // Serial.println(eeprom_object.IDnum);
+
   Serial.print(F("Node ID: "));
   Serial.println(eeprom_object.nodeID);
   Serial.print(F("Gatway ID:  "));
@@ -931,39 +1070,20 @@ void menu() {
   Serial.print(F("Include Resistance Values in output:  "));
   Serial.println(eeprom_object.include_resistance);
   Serial.println(F("Current Sensor Grouping for Means:  "));
-  Serial.print(F("Group1: "));
-  for (int i = 0; i < 16; i++) {
-    if (eeprom_object.WM_group1[i] >= 0 && eeprom_object.WM_group1[i] != 255) {
-      Serial.print(eeprom_object.WM_group1[i]);
-      Serial.print(F("  "));
-    }
-  }
-  Serial.println();
-  Serial.print(F("Group2: "));
-  for (int i = 0; i < 16; i++) {
-    if (eeprom_object.WM_group2[i] >= 0 && eeprom_object.WM_group2[i] != 255) {
-      Serial.print(eeprom_object.WM_group2[i]);
-      Serial.print(F("  "));
-    }
-  }
-  Serial.println();
-  Serial.print(F("Group3: "));
-  for (int i = 0; i < 16; i++) {
-    if (eeprom_object.WM_group3[i] >= 0 && eeprom_object.WM_group3[i] != 255) {
-      Serial.print(eeprom_object.WM_group3[i]);
-      Serial.print(F("  "));
-    }
-  }
-  Serial.println();
-  Serial.print(F("Group4: "));
-  for (int i = 0; i < 16; i++) {
-    if (eeprom_object.WM_group4[i] >= 0 && eeprom_object.WM_group4[i] != 255) {
-      Serial.print(eeprom_object.WM_group4[i]);
-      Serial.print(F("  "));
-    }
-  }
-  Serial.println();
 
+  for (int i = 0; i < 4; i++){
+    Serial.print(F("Group"));
+    Serial.println(i+1);
+    Serial.print(F(": "));
+    for (int j = 0; j < 16; j++) {
+      if (eeprom_object.WM_groups[i][j] >= 0 && eeprom_object.WM_groups[i][j] != 255) {
+        Serial.print(eeprom_object.WM_groups[i][j]);
+        Serial.print(F("  "));
+      }
+    }
+    Serial.println();
+  }
+  
   Serial.print(F("Number of temperature sensors connected:  "));
   Serial.println(eeprom_object.num_ds18b20);
 
@@ -1006,7 +1126,9 @@ void menu() {
   } else {
     Serial.println(F("OFF."));
   }
+}
 
+void print_menu_options(){
   Serial.println(F("Menu Actions:"));                                                   // Define menu Actions--------------------------------------------
   Serial.println(F("   c  <--  Set clock"));                                            // "99" Set RTC clock
   Serial.println(F("   i  <--  Set ID numbers"));                                       // "105" set IDnum, nodeID, gatewayID
@@ -1026,6 +1148,1389 @@ void menu() {
   Serial.println(F("   e  <--  Erase all data"));                    // "101" erase all data
   //  Serial.println(F("   m  <--  Repeat menu"));                                    // "109" repeat menu, not functional
   Serial.println(F("   x  <--  Exit"));  // "120" exit
+}
+
+void identify_temperature_sensors(){
+  Serial.println(F("Iterative identification of ds18b20 temperature sensors."));
+  get_integer_input();  //otherwise the first input is always 0?
+  Serial.println(F("If you would like to continue, press 1. To return to main menu, press any other character."));
+  get_integer_input();
+  // do not specify int user_resp = indata; // for some reason it does not allow menu access, define the integer then change it.
+  int user_resp;
+  delay(100);
+  user_resp = indata;
+  delay(100);
+  if (user_resp != 1) {
+    menu();
+  } else {
+    Serial.println(F("Continuing with iterative identificaiton of ds18b20 temperature sensors..."));
+    delay(1000);
+    Serial.println(F("How many ds18b20 are being connected?"));
+    get_integer_input();
+    eeprom_object.num_ds18b20 = indata;
+
+    if (eeprom_object.num_ds18b20 == 0) {
+      Serial.println(F("As 0 external temperature sensors are being connected, temperature correction will be made using the Real Time Clock inside the environmental enclosure."));
+      menu();
+    }
+
+    Serial.print(F("User must complete identification of "));
+    Serial.print(eeprom_object.num_ds18b20);
+    Serial.println(F(" ds18b20 temperature sensors."));
+    Serial.println(F("Prepare to plug in sensors..."));
+    delay(2000);
+    Identify_1WireDevices();
+  }
+}
+
+void set_clock(){
+  Serial.println(F("Set clock:  "));
+  get_integer_input();  //otherwise the first input is always 0?
+  Serial.print(F("  input month: "));
+  get_integer_input();
+  mnths = indata;
+  Serial.print(F("  input day:    "));
+  get_integer_input();
+  days = indata;
+  Serial.print(F("  input year:   "));
+  get_integer_input();
+  yrs = indata;
+  Serial.print(F("  input hour:   "));
+  get_integer_input();
+  hrs = indata;
+  Serial.print(F("  input minute: "));
+  get_integer_input();
+  mins = indata;
+  Serial.print(F(" input second: "));
+  get_integer_input();
+  secs = indata;
+
+  rtc.adjust(DateTime(yrs, mnths, days, hrs, mins, secs));
+  delay(50);
+}
+
+void pump_priming_prompt(){
+  get_integer_input();  //otherwise the first input is always 0?
+  Serial.flush();
+  Serial.println(F("Are you sure you want to cycle the pumps?"));
+  Serial.println(F("Make sure the lines are oriented where outflow is desired!"));
+  Serial.println(F("Type YES to confirm priming of pumps"));
+
+  charinput();
+  if (charInput[0]) {
+    char answer[4]{ 0 };
+    byte i = 0;
+    for (int i = 0; i < 3; i++) {
+      if (charInput[i] != 0) {
+        answer[i] = charInput[i];
+      }
+    }
+    Serial.print(F("Answer: "));
+    Serial.println(answer);
+    if (strcmp(answer, "YES") == 0) {
+      Serial.println(F("Priming Pumps..."));
+
+      digitalWrite(in1, HIGH);  //provide power to relay/switch on respective pin, relays are configured active when HIGH. pumps should be normally open & circuit closed when powered
+      delay(10000);
+      digitalWrite(in1, LOW);  //power off
+      delay(2000);
+      digitalWrite(in2, HIGH);
+      delay(10000);
+      digitalWrite(in2, LOW);
+      delay(2000);
+      digitalWrite(in3, HIGH);
+      delay(10000);
+      digitalWrite(in3, LOW);
+      delay(2000);
+      digitalWrite(in4, HIGH);
+      delay(10000);
+      digitalWrite(in4, LOW);
+      Serial.println(F("Pump priming routine completed."));
+    } else {
+      Serial.println(F("Answer was not YES, pump priming failed to initialize."));
+    }
+  }
+}
+
+void radio_prompt(){
+  Serial.println(F("Would you like to enable radio transmisison?"));
+  get_integer_input();  //otherwise first is always 0?
+  Serial.println(F("Type 1 to enable radio transmissions or 0 to disable radio transmissions."));
+  get_integer_input();
+  eeprom_object.toggle_radio = indata;
+
+  if (indata != 1) {
+    Serial.println(F("Radio transmissions DISABLED."));
+    driver.sleep();  //Puts radio to sleep.
+  } else {
+    Serial.println(F("Radio transmissions ENABLED."));
+    RH_RF95 driver(4, 2);
+    RHReliableDatagram manager(driver, radioID);  //Set up the radio manager
+    if (!driver.init()) {
+      Serial.println(F("Radio initialization failed."));
+    }
+    if (driver.init()) {
+      Serial.println(F("Radio initilization successful."));
+    }
+  }
+}
+
+void troubleshooting_prompt(){
+  Serial.println(F("Would you like to enter troublesooting mode?"));
+  Serial.println(F("Troubleshooting mode does not save data to sdcard but DOES send radio transmissions."));
+  Serial.println();
+  Serial.println(F("You may also toggle the printing of extra runtime notes to help with troubleshooting."));
+  Serial.println(F("This can be done in Troubleshooting mode or during normal operation."));
+  get_integer_input();  //otherwise first is always 0?
+  delay(2000);
+
+  Serial.println(F("Would you like to enable runtime notes?"));
+  Serial.println(F("Enter 1 to enable runtime notes or 0 to disable runtime notes."));
+  Serial.print(F("Current runtime notes Setting:  "));
+  if (eeprom_object.run_notes) {
+    Serial.println(F("ON."));
+  } else {
+    Serial.println(F("OFF."));
+  }
+  get_integer_input();
+
+  if (indata == 1 || indata == 0) {
+    eeprom_object.run_notes = indata;
+  } else {
+    Serial.println(F("Invalid Entry, returning to main menu."));
+    menu();
+  }
+  delay(2000);
+
+  Serial.println(F("If you would like to enable troubleshooting mode enter 1, otherwise enter 0 to enable regular operation."));
+  Serial.println(F("Enter any other key to return to the main menu."));
+  get_integer_input();
+
+  if (indata == 1 || indata == 0) {
+    eeprom_object.demo_mode = indata;
+  } else {
+    menu();
+  }
+
+  if (eeprom_object.demo_mode) {  //if demo_mode is true (1)...
+    Serial.println(F("Troubleshooting mode enabled."));
+    delay(1000);
+  } else {
+    Serial.println(F("Regular operation enabled."));
+    delay(1000);
+  }
+}
+
+void erase_sd(){
+  Serial.println(F("Erase data on sd card..."));
+  Serial.print(F("Currently Writing to: "));
+  Serial.println(filename);
+  Serial.print(F("Do you want to delete: "));
+  Serial.print(filename);
+  Serial.println(F("? Type YES to confirm deletion of this file."));
+
+  get_integer_input();  //Otherwise first input is always 0?
+  Serial.flush();
+  charinput();
+  if (charInput[0]) {
+    char erase[4]{ 0 };
+    byte i = 0;
+    for (int i = 0; i < 3; i++) {
+      if (charInput[i] != 0) {
+        erase[i] = charInput[i];
+      }
+    }
+    Serial.print(F("erase:  "));
+    Serial.println(erase);
+    if (strcmp(erase, "YES") == 0) {
+      SD.remove(filename);
+      Serial.println(F("Data File deleted"));
+      // Planned Change: This will be removed since firstTime will be removed
+      // eeprom_object.firstTime = true;  //Return firsttime to true so header is printed when first writing to file
+    } else {
+      Serial.println(F("If condition not satisfied"));
+    }
+  }
+}
+
+void set_project_id(){
+  Serial.print(F(" Project ID:     "));  // get projectID up to numChars length
+  Serial.flush();
+  charinput();
+  if (charInput[0]) {
+    byte i = 0;
+    for (int i = 0; i < numChars; i++) {
+      if (charInput[i] != 0 || charInput[i] != '\0') {
+        eeprom_object.projectID[i] = charInput[i];
+      } else {
+        eeprom_object.projectID[i] = '\0';
+        break;
+      }
+    }
+  }
+}
+
+// Planned Change: This will be removed since BoardID will be removed
+// void set_board_id(){
+//   Serial.print(F(" Board ID:     "));  // get BoardID
+//   Serial.flush();
+//   get_integer_input();  // decode user input
+//   eeprom_object.IDnum = indata;
+// }
+
+void set_node_id(){
+  Serial.print(F(" Node ID:  "));  // get nodeID
+  Serial.flush();
+  get_integer_input();  // decode user input
+  eeprom_object.nodeID = indata;
+}
+
+void set_gateway_id(){
+  Serial.print((" Gateway ID:  "));  // get GatewayID
+  Serial.flush();
+  get_integer_input();  // decode user input
+  eeprom_object.gatewayID = indata;
+}
+
+//-----Read DS18B20 Temperature sensors-------------------------------------------            //do not plug in backwards or board will heat!!!
+float getTemp() {
+  //returns the temperature from one DS18S20 in DEG Celsius, not using the actual return value but updating the temperature_string
+
+  sensors.begin();  //initiate the library
+
+  delay(100);
+  sensors.setResolution(DS18B20_Address, 9);  //Specify the resolution of the device, in bits (9 to 12). Higher resolution takes more time, 12bit can be up to 750ms
+
+  delay(100);  //The second call to sensors.begin(); below did not work for me 04/04/22
+
+  Serial.println(F("Requesting Temperatures..."));  //Print temperatures by address, each sensor address is defined before setup().
+  sensors.requestTemperatures();
+
+  delay(1000);
+
+  Serial.print(F("Locating devices..."));  // locate devices on the bus with getDeviceCount, there are known errors with getDeviceCount returning 0....
+  Serial.print(F("Found "));
+  int num_ds18b20 = (sensors.getDeviceCount());  //store # of sensors detected, there are known errors with getDeviceCount returning 0....
+  delay(100);
+  Serial.print(num_ds18b20);
+  Serial.println(F(" devices."));
+
+  Serial.print(F("Power = Parasite:  "));
+  Serial.println(sensors.readPowerSupply(DS18B20_Address));  //report parasite power condition (should be 0 with our wiring.)
+  delay(100);
+  Serial.print(("Parasite power is: "));  // report parasite power condition
+  if (sensors.isParasitePowerMode()) {
+    Serial.println(F("ON"));
+  } else {
+    Serial.println(F("OFF"));
+  }
+
+  delay(10);
+
+  //Reference code to store the addresses in eeprom. This seems by-far the best solution through a menu() window to identify sensors....
+  //< https: //forum.arduino.cc/t/storage-of-ds18b20-address-in-eeprom/934477/19>
+  //< https: //www.hacktronics.com/Tutorials/arduino-1-wire-address-finder.html>
+  // Serial.println(F("Begin test of configuring string from array"));
+  // Serial.println(eeprom_object.num_ds18b20);
+  float sum_temp = 0;  //for mean
+  float mean_temp = 0;
+  float single_temp = 0;  //for error detection
+  float rtcTemp = 0;
+
+  // Planned Change
+  // Replace this array with the 2D array in eeprom
+  //The top level array (an array of arrays here) must be a pointer.
+  //uint8_t *ds18b20_array[]{ eeprom_object.ds18b20_sensor0, eeprom_object.ds18b20_sensor1, eeprom_object.ds18b20_sensor2, eeprom_object.ds18b20_sensor3, eeprom_object.ds18b20_sensor4, eeprom_object.ds18b20_sensor5, eeprom_object.ds18b20_sensor6, eeprom_object.ds18b20_sensor7, eeprom_object.ds18b20_sensor8, eeprom_object.ds18b20_sensor9, eeprom_object.ds18b20_sensor10, eeprom_object.ds18b20_sensor11, eeprom_object.ds18b20_sensor12, eeprom_object.ds18b20_sensor13, eeprom_object.ds18b20_sensor14, eeprom_object.ds18b20_sensor15 };
+
+  rtcTemp = rtc.getTemperature();  //from the ds3232 library -> replaced with RTClib.h solution which already does the bitshifting
+
+  //Loop through...
+  for (int i = 0; i < (eeprom_object.num_ds18b20); i++) {
+    Serial.print(F("Sensor "));
+    Serial.print(i);
+    Serial.print(F(" Address: "));
+    //printAddress(ds18b20_array[i]);
+    printAddress(eeprom_object.ds18b20_sensor_addresses[i]);
+    Serial.print(F(" Temperature C: "));
+    single_temp = sensors.getTempC(eeprom_object.ds18b20_sensor_addresses[i]);
+    delay(10);
+    Serial.print(single_temp);
+    Serial.println();
+
+    if (single_temp == -127.00) {
+      eeprom_object.error_log.ds18b20_struct.ds_unit_error[i] = true;
+      eeprom_object.error_log.ds18b20_struct.ds_unit_error_code[i] = 111;  // "o" for open
+      eeprom_object.error_log.write_log = true;
+    }
+    if (single_temp == 85.00) {
+      eeprom_object.error_log.ds18b20_struct.ds_unit_error[i] = true;
+      eeprom_object.error_log.ds18b20_struct.ds_unit_error_code[i] = 114;  // "r" for reset during conversion
+      eeprom_object.error_log.write_log = true;
+    }
+    if (single_temp == -98.00) {
+      eeprom_object.error_log.ds18b20_struct.ds_unit_error[i] = true;
+      eeprom_object.error_log.ds18b20_struct.ds_unit_error_code[i] = 117;  // "u" for unknown error
+      eeprom_object.error_log.write_log = true;
+    }
+
+    if (single_temp == -127.00 || single_temp == -98.00 || single_temp == 85.00) {  //Check for known fault codes
+      if (eeprom_object.run_notes == true) {
+        Serial.print(F("Error on temperature sensor:  "));
+        Serial.print(i);
+        Serial.print(F("  With Value: "));
+        Serial.println(single_temp);
+        Serial.println(F("Replacing this sensors temperature with that of the RTC."));
+      }
+      single_temp = rtcTemp;
+    }
+
+    //Removed on 06/15/2023 as some nodes may be in the sun while sensors are in the soil leading to a large difference in temperature. Let the error codes handle replacement.
+    // if (((abs(rtcTemp - single_temp) / ((rtcTemp + single_temp) / 2)) > 20) || ((single_temp - rtcTemp) >= 10) || ((single_temp - rtcTemp) <= -10)) {  //if Percent difference between the sensor temp and the RTC temp is higher than 20%, use the rtcTemp from the RTC. 2022/05/23 Added + or - 10 from rtcTemp as an additional criteria.
+    //   Serial.print(F("Percent Difference threshold (20%) from RTC reference temp exceeded on Sensor "));
+    //   Serial.print(i);
+    //   Serial.print(F(" With Value: "));
+    //   Serial.println(single_temp);
+    //   Serial.println(F("Replacing this sensors temperature with that of the RTC."));
+    //   single_temp = rtcTemp;
+    // }
+
+    sum_temp += single_temp;
+    delay(20);
+    mean_temp = (sum_temp / eeprom_object.num_ds18b20);
+
+    //IF 0 external DS18b20 temperature sensors are connected, temperature corrections will be made using the rtcTemp & this will be reported.
+    if (eeprom_object.num_ds18b20 == 0) {
+      single_temp = rtcTemp;
+      mean_temp = rtcTemp;
+    }
+
+
+    temperature_string += 'T';
+    temperature_string += (i);
+    temperature_string += ',';
+    temperature_string += single_temp;
+    global_temp_values[i] = single_temp;
+    delay(10);
+    temperature_string += ',';
+  }
+
+  if (eeprom_object.run_notes == true) {
+    Serial.print(F("Sum of temperature sensors: "));
+    Serial.println(sum_temp);
+    Serial.print(F("Number of temperature sensors:  "));
+    Serial.println(eeprom_object.num_ds18b20);
+    Serial.println(F("End test of configuring string from array"));
+  }
+
+  Serial.print(F("Mean temperature:  "));
+  Serial.println(mean_temp);
+  return mean_temp;
+}
+
+////
+void printAddress(DeviceAddress deviceAddress) {
+  for (uint8_t i = 0; i < 8; i++) {
+    Serial.print("0x");
+    if (deviceAddress[i] < 0x10) Serial.print("0");
+    Serial.print(deviceAddress[i], HEX);
+    if (i < 7) Serial.print(", ");
+  }
+  Serial.print(F(" "));
+}
+
+void compile_json(){
+  // Option 1: Use global JSON buffer
+  // jsonBuffer.clear();
+  // JsonObject obj = jsonBuffer.createNestedObject("data");
+
+  // Option 2: Use local JSON document and object
+  StaticJsonDocument<10000> data;
+  JsonObject obj = data.createNestedObject();
+
+  // Related functions: read_watermark(), getTemp(), WM_Irrigation_prompt()
+  // Old terminology of "header", "WM_String" would go away and we work solely off of the key, value pairs
+  // Try to separate reading and computing statistics
+  
+  // header contains node ID, voltage of battery, and date and time
+
+  // Planned Change: This will be removed since IDnum will be removed
+  // obj["nodeID"] = eeprom_object.IDnum;
+
+  battV = calcbattV();
+  Serial.print(F("Battery Pack Voltage:  "));
+  Serial.println(battV);
+  obj["voltage"] = battV;
+
+  obj["months"] = mnths;
+  obj["days"] = days;
+  obj["years"] = yrs;
+  obj["hours"] = hrs;
+  obj["minutes"] = mins;
+  obj["seconds"] = secs;
+  
+  delay(20);
+
+  // irrigation prompt string: irrigation group number, mean (kpa) (sensor reading), start of last irrigation event, stop of last irigation event,
+  obj["WM_group_num"] = global_WM_group_num;
+  obj["WM_group_mean"] = global_WM_group_mean;
+  obj["last_irr_starting_time"] = global_last_irr_starting_time;
+  obj["last_irr_ending_time"] = global_last_irr_ending_time;
+
+  // temperature string: temperature group  and reading (temperature sensor number and value)
+  // In read_watermark(), 
+  // example of data: 110,7.46,8/27/2023 11:50:29,0,-67,1,-110,2,0,3,-184,4,0,5,-137,6,0,7,0,8,-81,9,-73,10,0,11,-100,12,0,G1,-100,8/27/2023 11:50:48,G2,-999,8/27/2023 10:48:18,G3,-999,8/27/2023 10:48:50,G4,0,5/3/2101 1:45:12,T0,29.50
+  
+  JsonArray temperature_readings = obj.createNestedArray("temperature_readings");
+  // FIXME: finish temperature sensor stuff
+  for (int i = 0; i < 16; i++){
+    temperature_readings.add(global_temp_values[i]);
+  }
+
+  // example keys: IDnum, months, days, years
+}
+
+//---
+// Planned Change: Will this be removed as we add the new JSON methods to save data
+// void saveData() {
+
+//   if (!SD.begin(SD_CS)) {
+//     Serial.println(F("SD card not present or card failure."));
+//     eeprom_object.error_log.sd_struct.card_begin_failure = true;
+//     eeprom_object.error_log.write_log = true;
+//   }
+
+//   delay(50);
+
+//   myfile = SD.open(filename, FILE_WRITE);  //Open file for writing
+//   delay(100);
+
+//   if (myfile) {                             //If myfile is available...
+//     if (eeprom_object.firstTime == true) {  //Print this header if first time writing to file
+//       myfile.println();
+//       myfile.println(F("Data values are stored as follows:"));
+//       myfile.println(F("Node ID, Node battery voltage (V), DateTime"));
+//       myfile.println(F("Following DateTime the mux channel position and sensor value (CB/kpa) for all watermark sensors installed are printed (Channel, Value, Channel, Value)"));
+//       myfile.println(F("IF user specified for reporting of raw resistance values, format will be (Channel, kPa, resistance, Channel, kPa, Resistance), etc."));
+//       myfile.println(F("Following the raw watermark sensor data, the water management group means are reported as (G(1-4), Mean, DateTime of last irrigation)"));
+//       myfile.println(F("After watermark group means, DS18b20 temperature sensor data is reported as (T(# of sensor), Value (C))"));
+//       myfile.println();
+
+//       eeprom_object.firstTime = false;  //Only include this header when first writing to file
+//     }
+
+//     data.remove(data.length() - 1, 1);  //Remove the character that indicated the end of a transmission "]"
+//     delay(10);
+//     data.remove(0, 4);  //Remove the Transmission information "[~~~". Zero indexed
+//     delay(10);
+//     myfile.println(data);  //Save data string to file
+//     delay(200);
+//     myfile.close();  //Must close file
+//     delay(200);
+//     Serial.println(F("Data Written Successfully."));
+//   } else {
+//     Serial.println(F("Error opening file."));  //Error if myfile is not available
+//     eeprom_object.error_log.sd_struct.open_file_failure = true;
+//     eeprom_object.error_log.write_log = true;
+//   }
+// }
+
+// FIXME: Instead of populating WM_String string, populate JSON object
+//-----Read Watermark Sensors---------------------------------------
+void read_watermark() {
+  //Declare vars
+  const int num_Iter = 3;              //Define number of iterations. Each is actually two reads of the sensor (both directions)
+  long TempC = Temp;                   //Pull average temperature sensor from ds18b20 for time being until each temperature sensor can be attributed to a single or group of watermark sensors
+  const long open_resistance = 35000;  //For throwing fault 255, default was 35000
+  const long short_resistance = 200;   //For throwing fault 240, default was 200, modified was 45
+  const long mux_resistance = 140;     //The "ON" resistance of two CD74HC4067 Multiplexors (70 ohms each)
+  const long short_CB = 240;           //The Fault Code for WM sensor terminal short in wiring
+  const long open_CB = 255;            //The Fault Code for WM sensor open circuit or missing sensor / sensor not present
+  double Calib_Resistance;             //Holder for any calibration resistor present
+  double SenV10K = 0;                  //For calibration resistor
+  int number_WM_Cal_resistor_offset;   //Will be equal to eeprom_object.num_WM unless a calibration resistor is used, it will be incremented by 1
+
+  if (eeprom_object.calibration_resistor_present) {
+    number_WM_Cal_resistor_offset = eeprom_object.num_WM;
+    number_WM_Cal_resistor_offset++;
+  } else {
+    number_WM_Cal_resistor_offset = eeprom_object.num_WM;
+  }
+
+
+  int WM_case;     //for describing what happens to the watermark readings based on the resistance
+  int WM1_CB = 0;  //Holder for WM sensor value in CB/kPa, direction 1
+  int WM2_CB = 0;  //Holder for WM sensor value in CB/kPa, direction 2
+
+  double SenVWM1 = 0;  //VWM is the "stand off voltage"?, taken here to mean the average voltage which was recorded in direction 1.
+  double SenVWM2 = 0;  //VWM is the "stand off voltage"?, taken here to mean the average voltage which was recorded in direction 2.
+
+  double ARead_path1 = 0;  //The raw analog read value obtained in direction 1.
+  double ARead_path2 = 0;  //The raw analog read value obtained in direction 2.
+
+  float SupplyV = 3.3;  //If using a different logic board (3.3V vs. 5V etc) moteino mega is ~3.3v. //In the future it may be desirable to store energy in a capacitor instead of relying on instant moteino board power.
+
+  //Code-----
+  ARead_path1 = 0;  //Reset these values on the loop
+  ARead_path2 = 0;
+
+  if (eeprom_object.calibration_resistor_present == true) {  //Read the calibration resistor IF included. There is no polarity swap needed here
+    for (int j = 0; j < num_Iter; j++) {                     //the num_Iter controls the number of successive read loops that is averaged.
+      digitalWrite(mux_enable, LOW);                         //enable the MUX (The EN Pin on CD74HC4067)
+      delay(10);
+      mux_1.channel(eeprom_object.cal_resistor_loc);  //address the MUX where calibration resistor is installed
+      delay(10);
+      digitalWrite(WM_path2, LOW);                    //Set pin as gnd
+      digitalWrite(WM_path1, HIGH);                   //Set pin as Vs
+      delay(0.09);                                    //wait 90 micro seconds and take sensor read
+      ARead_path1 += analogRead(WM_analog_read_pin);  //read the analog pin the multiplexor is connected to (Moteino Mega 10bit ADC)
+      digitalWrite(WM_path1, LOW);                    //set the excitation voltage to OFF/LOW
+      delay(100);                                     //0.1 second delay before moving to next channel or switching MUX
+    }
+    digitalWrite(mux_enable, HIGH);                                                                                                             //Disable mulitplexor
+    SenV10K = ((ARead_path1 / 1024.0f) * SupplyV) / (num_Iter);                                                                                 //get the average of the number of readings and convert to volts, 1024 here for 10bit ADC
+    Calib_Resistance = eeprom_object.cal_resistor_val / ((eeprom_object.fixed_resistor_val * (SupplyV - SenV10K) / SenV10K) - mux_resistance);  //generate a calibration factor.
+    Serial.print(F("SenV10K:  "));
+    Serial.println(SenV10K);
+    Serial.print(F("eeprom_object.cal_resistor_loc: "));
+    Serial.println(eeprom_object.cal_resistor_loc);
+    Serial.print(F("Calibration Factor from fixed Resistor: "));
+    Serial.println(Calib_Resistance);
+    Serial.print(F("Raw Sum of Analog Reads:  "));
+    Serial.println(ARead_path1);
+    delay(100);  //0.1 second wait before moving to next channel or switching MUX
+  } else {
+    Serial.println(F("Calibration Factor defaulting to 1. Insert and specify a fixed resistor for calculating a calibration factor."));
+    Calib_Resistance = 1;            //if not actually calculated, assume 1
+    digitalWrite(mux_enable, HIGH);  //Disable mux pair
+  }
+  for (int i = 0; i < number_WM_Cal_resistor_offset; i++) {  //Assuming num_WM starts at mux channel 0 and increments, i.e. if num_WM = 4, i=0,1,2,3
+    ARead_path1 = 0;                                //restore values to 0 for successive WM readings
+    ARead_path2 = 0;
+
+    //8/2/2023 Need to account for when a Calibration Resistor is installed. The for statement above used to read i < eeprom_object.num_WM
+
+
+    for (int n = 0; n < num_Iter; n++) {  //take num_Iter readings from mux channel i
+      digitalWrite(mux_enable, LOW);      // enable the MUX
+      delay(100);
+      mux_1.channel(i);  //Select mux channel from i in for loop referenceing num_WM above
+      delay(10);
+      digitalWrite(WM_path1, HIGH);                   //set signal pin of mux 1 (pin7) high
+      delay(0.09);                                    //Wait 90 microseconds
+      ARead_path1 += analogRead(WM_analog_read_pin);  //read the signal from this direction and add to running total
+      digitalWrite(WM_path1, LOW);                    //set pin low
+
+      //Polarity SWAP
+      delay(100);
+
+      digitalWrite(WM_path2, HIGH);                   //set pin 11 high this time
+      delay(0.09);                                    //Wait 90 microseconds
+      ARead_path2 += analogRead(WM_analog_read_pin);  //read the signal from the opposite direction and add to running total
+      digitalWrite(WM_path2, LOW);                    //set pin low
+    }
+    SenVWM1 = ((ARead_path1 / 1024.0f) * SupplyV) / (num_Iter);  //get the average of the readings in the first direction and convert to volts | 1024 because 10bit adc
+    SenVWM2 = ((ARead_path2 / 1024.0f) * SupplyV) / (num_Iter);  //get the average of the readings in the second direction and convert to volts
+
+    double WM1_ResistanceA = ((eeprom_object.fixed_resistor_val * (SupplyV - SenVWM1) / SenVWM1) - mux_resistance);  //do the voltage divider math, using the the known resistor in the circuit
+    double WM1_ResistanceB = eeprom_object.fixed_resistor_val * SenVWM2 / (SupplyV - SenVWM2) - mux_resistance;      //voltage divider math, opposite direction
+
+    double WM1_Resistance = ((WM1_ResistanceA + WM1_ResistanceB) / 2) * Calib_Resistance;  //Average of the directions and apply calibration factor
+    digitalWrite(mux_enable, HIGH);                                                        //Disable mux pair
+    delay(100);
+
+    //Troubleshooting consideration
+    if (eeprom_object.run_notes) {
+      Serial.print(F("ARead_path1:  "));
+      Serial.println(ARead_path1);
+      Serial.print(F("ARead_path2:  "));
+      Serial.println(ARead_path2);
+      Serial.print(F("SenVWM1:  "));
+      Serial.println(SenVWM1);
+      Serial.print(F("SenVWM2:  "));
+      Serial.println(SenVWM2);
+      Serial.print(F("WM1_ResistanceA:  "));
+      Serial.println(WM1_ResistanceA);
+      Serial.print(F("WM1_ResistanceB:  "));
+      Serial.println(WM1_ResistanceB);
+      Serial.print(F("WM_Resistance:  "));
+      Serial.println(WM1_Resistance);
+    }
+
+
+    //-------Conversion of Resistance to centibars/kilopascals, 6 cases plus faults, equations from manufacturer
+    if (WM1_Resistance > 550.00) {
+      if (WM1_Resistance > 8000.00) {
+        WM_case = 1;
+      } else if (WM1_Resistance > 1000.00) {
+        WM_case = 2;
+      } else {
+        WM_case = 3;
+      }
+    } else {
+      if (WM1_Resistance > 300.00) {
+        WM_case = 4;
+      }
+      if (WM1_Resistance < 300.00 && WM1_Resistance >= short_resistance) {
+        WM_case = 5;
+      }
+    }
+    if (WM1_Resistance >= open_resistance) {
+      WM_case = 6;
+    }
+    switch (WM_case) {
+      case 1:
+        WM1_CB = -2.246f - 5.239f * (WM1_Resistance / 1000.00f) * (1.0f + .018f * (TempC - 24.00f)) - .06756f * (WM1_Resistance / 1000.00f) * (WM1_Resistance / 1000.00f) * ((1.00f + 0.018f * (TempC - 24.00f)) * (1.00f + 0.018f * (TempC - 24.00f)));
+        break;
+      case 2:
+        WM1_CB = (-3.213f * (WM1_Resistance / 1000.00f) - 4.093f) / (1.0f - 0.009733f * (WM1_Resistance / 1000.00f) - 0.01205f * (TempC));
+        break;
+      case 3:
+        WM1_CB = ((WM1_Resistance / 1000.00f) * 23.156f - 12.736f) * (1.0f + 0.018f * (TempC - 24.00f));
+        break;
+      case 4:
+        WM1_CB = 0.00;
+        break;
+      case 5:
+        WM1_CB = short_CB;  //240 is a fault code for sensor terminal short
+        eeprom_object.error_log.wm_struct.mux_channel_error[i] = true;
+        eeprom_object.error_log.wm_struct.mux_channel_error_code[i] = 115;  // "s" for short
+        eeprom_object.error_log.write_log = true;
+        break;
+      case 6:
+        WM1_CB = open_CB;  //255 is a fault code for open circuit or sensor not present, also observed in new dry sensors
+        eeprom_object.error_log.wm_struct.mux_channel_error[i] = true;
+        eeprom_object.error_log.wm_struct.mux_channel_error_code[i] = 111;  //"o" for open
+        eeprom_object.error_log.write_log = true;
+        break;
+      default:
+        WM1_CB = 0;  //the default if resistance does not fall within case 1 to 6
+        eeprom_object.error_log.wm_struct.mux_channel_error[i] = true;
+        eeprom_object.error_log.wm_struct.mux_channel_error_code[i] = 100;  // "d" for default
+        eeprom_object.error_log.write_log = true;
+        break;
+    }
+
+    //July 2023, we are observing some sensors returning positive kPa values (should be impossible by falling into one of the above cases, but tuning seems to be required for the constants)
+    if (WM1_CB > 0) {
+      WM1_CB = 0;
+      eeprom_object.error_log.wm_struct.mux_channel_error[i] = true;
+      eeprom_object.error_log.wm_struct.mux_channel_error_code[i] = 112;  // "p" for positive
+      eeprom_object.error_log.write_log = true;
+    }
+
+    //print out data of interest
+    Serial.print(F("Channel "));
+    Serial.print(i);
+    Serial.print(F("  Resistance Ohms: "));
+    Serial.print(WM1_Resistance);
+    Serial.print(F("  kPa:  "));
+    Serial.println(WM1_CB);
+
+    //Aggregate data to WM_string
+    //IF statement for if raw resistance values are desired too...
+    if (eeprom_object.include_resistance == true) {
+      WM_string += (i);
+      WM_string += ',';
+      WM_string += (WM1_Resistance);
+      WM_string += ',';
+      WM_string += (WM1_CB);
+      WM_string += ',';
+    } else {
+      WM_string += (i);
+      WM_string += ',';
+      WM_string += (WM1_CB);
+      WM_string += ',';
+    }
+  }
+}
+
+// Planned Change: This will be removed as the new JSON methods of saving data are added
+// //---------- Clear buffer---------------
+// void clearBuffer() {
+//   WM_string = "";
+//   temperature_string = "";
+//   irrigation_prompt_string = "";
+//   data = "";
+//   delay(100);
+// }
+
+//-----WM Group means handling------------------                                 //This portion could probably be substantially optimized...
+
+int WM_group_means(uint8_t WM_group_num[], int datasize, uint8_t water_threshold_group) {
+
+  force_irr = false;  //reset force_irr
+  int set_water_threshold;
+
+  if (water_threshold_group == 1) {
+    set_water_threshold = eeprom_object.group_irr_thresholds[0];
+  } else if (water_threshold_group == 2) {
+    set_water_threshold = eeprom_object.group_irr_thresholds[1];
+  } else if (water_threshold_group == 3) {
+    set_water_threshold = eeprom_object.group_irr_thresholds[2];
+  } else if (water_threshold_group == 4) {
+    set_water_threshold = eeprom_object.group_irr_thresholds[3];
+  } else {
+    Serial.println(F("Water threshold undefined, define it in the menu."));
+  }
+
+
+  char WM_array[WM_string.length() + 1];              //arrays are zero-indexed (start at position 0)
+  WM_string.toCharArray(WM_array, sizeof(WM_array));  //convert the WM_string to a character array
+
+  char *pointer_array[sizeof(WM_array)];  //create an empty character (pointer_array) the size of the character array
+  char *pointer = NULL;                   //declare an empty pointer variable
+  byte index = 0;                         //Declare an index to increment starting at 0 since arrays are 0 indexed
+
+  pointer = strtok(WM_array, ",");  //Looking withing WM_array, a comma is a delimiter for separation, declare what pointer points to
+  Serial.print(F("pointer:  "));
+  Serial.println(pointer);
+  while (pointer != NULL) {
+    pointer_array[index] = pointer;  //within pointer_array declare the pointer (0-inf) and the value pointed to (pointer)
+    index++;
+    pointer = strtok(NULL, ",");  //end the while loop
+  }
+
+  int sum = 0;  //declare holders for sum, count
+  int count = 0;
+  int error_code_count = 0;
+  //uint8_t raw_group_mean = 0;
+  float raw_group_mean = 0.00;
+  int buff_sum = 0;
+  int buff_count = 0;
+  int count_outliers = 0;  //Start at 0
+  int expected_sensor_count = 0;
+
+  if (water_threshold_group == 1) {
+    Serial.print(F("eeprom_object.WM_group1:  "));
+    for (int r = 0; r < 16; r++) {
+      if (eeprom_object.WM_group1[r] != 255 && eeprom_object.WM_group1[r] != -1) {
+        Serial.print(eeprom_object.WM_group1[r]);
+      }
+      if (eeprom_object.WM_group1[r] >= 0) {
+        expected_sensor_count++;
+      }
+    }
+    Serial.println();
+  } else if (water_threshold_group == 2) {
+    Serial.print(F("eeprom_object.WM_group2:  "));
+    for (int r = 0; r < 16; r++) {
+      if (eeprom_object.WM_group2[r] != 255 && eeprom_object.WM_group2[r] != -1) {
+        Serial.print(eeprom_object.WM_group2[r]);
+      }
+      if (eeprom_object.WM_group2[r] >= 0) {
+        expected_sensor_count++;
+      }
+    }
+    Serial.println();
+  } else if (water_threshold_group == 3) {
+    Serial.print(F("eeprom_object.WM_group3:  "));
+    for (int r = 0; r < 16; r++) {
+      if (eeprom_object.WM_group3[r] != 255 && eeprom_object.WM_group3[r] != -1) {
+        Serial.print(eeprom_object.WM_group3[r]);
+      }
+      if (eeprom_object.WM_group3[r] >= 0) {
+        expected_sensor_count++;
+      }
+    }
+    Serial.println();
+
+  } else if (water_threshold_group == 4) {
+    Serial.print(F("eeprom_object.WM_group4:  "));
+    for (int r = 0; r < 16; r++) {
+      if (eeprom_object.WM_group4[r] != 255 && eeprom_object.WM_group4[r] != -1) {
+        Serial.print(eeprom_object.WM_group4[r]);
+      }
+      if (eeprom_object.WM_group4[r] >= 0) {
+        expected_sensor_count++;
+      }
+    }
+    Serial.println();
+  } else {
+    Serial.println(F("Water threshold undefined, define it in the menu."));
+  }
+
+
+
+  for (int i = 0; i < datasize; i++) {                               //for the declared channel group,
+    int q = WM_group_num[i];                                         //q mirrors each element of channel group up to the globally specified datasize
+    if (q != ',' && q != ' ' && q != '-' && q != "-1" && q <= 16) {  //if q is not a comma or a space, -1, or some random number above 16...
+      //  q = (q * 2) + 1; //q is the location of the data of the desired channel, because channel of mux and arrays begin at 0, the value of channel 0 will be on element 1 of the array. formula is x*2+1                                                                                 //This is of course different if resistance values are included in the string.
+      if (eeprom_object.include_resistance == true) {
+        q = (q * 3) + 2;  //if we are including resistances in the wm_string, the formula is x*3+2
+      } else {
+        q = (q * 2) + 1;
+      }
+      int wm_val;
+      wm_val = atoi(pointer_array[q]);
+      //for troubleshooting
+      Serial.print(F("wm_val: "));  //for troubleshooting
+      Serial.println(wm_val);
+
+      if (wm_val != 255 && wm_val != 240 && wm_val != 0 && wm_val < 0) {  //If not throwing a fault code calculate an initial mean
+        sum += abs(wm_val);
+        count++;
+      } else {
+        if (wm_val == 255 || wm_val == 240 || wm_val > 0) {  // 255=open circuit, 240=short circuit
+          error_code_count++;
+        }
+      }
+      if (WM_group_num[i] != -1 && WM_group_num[i] <= 16) {
+        if (wm_val == 255 || wm_val == 240 || wm_val == 0) {
+          Serial.print(F("Node: "));           //If a fault code was one of the data requested in the group
+          Serial.print(eeprom_object.nodeID);  //Serial.print the nodeID, channel (algorithim is (x-1) / 2), and value of the fault
+          Serial.print(F("  Fault code on channel:  "));
+          Serial.print(WM_group_num[i]);
+          Serial.print(F("  with value: "));
+          Serial.print(wm_val);
+          Serial.println(F(".  Value not included in Group mean."));
+        }
+      }
+    }
+  }
+
+  //For troubleshooting
+  if (eeprom_object.run_notes) {
+    Serial.print(F("Sum:  "));
+    Serial.println(sum);
+    Serial.print(F("Count:  "));
+    Serial.println(count);
+    Serial.print(F("Expected Sensor Count:  "));
+    Serial.println(expected_sensor_count);
+    Serial.print(F("Error Code Count: "));
+    Serial.println(error_code_count);
+  }
+
+  if (count == 0.00) {  // none of the wm_val are counted...
+    raw_group_mean = 0.00;
+  } else {
+    raw_group_mean = (sum / count) * -1;  //calculate the raw_mean of the of the desired channels, negative 1 here as kpa is in tension
+  }
+  Serial.print(F("Raw group mean: "));
+  Serial.println(raw_group_mean);
+
+
+  //Run through calculation again, if percent difference of each sensor is < 20% from the raw_group_mean (all sensors as long as not fault code) include in the calculation of the buffered_mean that gets output & triggers irr events.
+  // 04/25/2022 Note that pdiff calc is working but that small differences in kpa result in large percent differences due to log scale...
+  // Need to consider a secondary flag. for example a "grace window" -> if the pdiff is > 20, check grace window. -> grace window = 10 (could be changed) -> if this sensors kpa is +10 or -10 from the raw_group_mean OR the set water threshold, include in calc of buffered mean, else exclude from buffered mean.
+
+  for (int i = 0; i < datasize; i++) {                               //for the declared channel group,
+    int q = WM_group_num[i];                                         //q mirrors each element of channel group up to the globally specified datasize
+    if (q != ',' && q != ' ' && q != '-' && q != "-1" && q <= 16) {  //if q is not a comma or a space, -1, or some random number above 16...
+      if (eeprom_object.include_resistance == true) {                //q is the location of the data of the desired channel, because channel of mux and arrays begin at 0, the value of channel 0 will be on element 1 of the array. formula is x*2+1
+        q = (q * 3) + 2;                                             //if we are including resistances in the wm_string, the formula is x*3+2
+      } else {
+        q = (q * 2) + 1;
+      }
+      int wm_val;
+      wm_val = atoi(pointer_array[q]);
+
+      ////// Another Question needs addressed. What if the mean is such that each individual sensor is >= 20% different from the raw_mean? ->> It needs to trigger the irrigation event anyway.
+      if (wm_val != 255 && wm_val != 256 && wm_val != 240 && wm_val != 0 && WM_group_num[i] != -1) {
+        if (abs((abs(raw_group_mean - wm_val) / ((raw_group_mean + wm_val) / 2.0)) * 100) < 20.0) {  //if the sensor reading is less than 20% different from the raw_group_mean, include in calc of buffered_group_mean
+          Serial.print(F("Channel: "));
+          Serial.print(WM_group_num[i]);
+          Serial.print(F("  value:  "));
+          Serial.print(wm_val);
+          Serial.print(F(", Pdiff from raw mean = "));
+          Serial.println(abs(((abs(raw_group_mean - wm_val)) / ((raw_group_mean + wm_val) / 2.0)) * 100));
+          buff_sum += abs(wm_val);
+          buff_count++;
+
+        } else if ((wm_val < set_water_threshold - wm_grace_window || wm_val > set_water_threshold + wm_grace_window) && (wm_val < raw_group_mean - wm_grace_window || wm_val > raw_group_mean + wm_grace_window)) {  //check grace window against raw group mean and the user defined water threshold, wm_grace_window defined globally.
+          Serial.print(F("Channel: "));
+          Serial.print(WM_group_num[i]);
+          Serial.print(F("  value:  "));
+          Serial.print(wm_val);
+          Serial.print(F(", Pdiff from raw mean = "));
+          Serial.print(abs(((abs(raw_group_mean - wm_val)) / ((raw_group_mean + wm_val) / 2.0)) * 100));
+          Serial.print(F("  detected as an outlier, (>20 pdiff & more than +- 10kpa from raw_group_mean AND the threshold set point)"));
+          Serial.println(F("  This channel is not counted in buffered group mean."));
+
+          Serial.print(F("Acceptable range based on raw group mean: "));
+          Serial.print(raw_group_mean - wm_grace_window);
+          Serial.print(F(" to "));
+          Serial.print(raw_group_mean + wm_grace_window);
+          Serial.println(F(" kPa"));
+
+          Serial.print(F("Acceptable range based on threshold set point: "));
+          Serial.print(set_water_threshold - wm_grace_window);
+          Serial.print(F(" to "));
+          Serial.print(set_water_threshold + wm_grace_window);
+          Serial.println(F(" kPa"));
+
+          count_outliers++;  //increment outlier count.
+        } else {
+          Serial.print(F("Channel: "));
+          Serial.print(WM_group_num[i]);
+          Serial.print(F("  value:  "));
+          Serial.print(wm_val);
+          Serial.print(F("  detected as a POSSIBLE outlier, (>20 pdiff from raw_group_mean,"));
+          Serial.print(F(" Pdiff from raw mean = "));
+          Serial.print(abs(((abs(raw_group_mean - wm_val)) / ((raw_group_mean + wm_val) / 2.0)) * 100));
+          Serial.println(F(")"));
+          buff_sum += abs(wm_val);  //include in buffered_mean calc anyway if + - 10 from raw mean or set water threshold
+          buff_count++;
+        }
+      }
+    }
+  }
+  Serial.print(F("Total Outliers: "));
+  Serial.println(count_outliers);
+
+  Serial.print(F("Sensors Considered (count): "));
+  Serial.println(buff_count);
+
+  if (error_code_count > (0.25 * expected_sensor_count) && expected_sensor_count > 2) {  // if there are 3 or more sensors expected and the error code count is greater than or equal to 1/4 of the expected sensor count.....force the event
+    Serial.println(F("More than 1/4 the expected sensors of the group are throwing an error code."));
+    Serial.println(F("Forcing an irrigation event."));
+    force_irr = true;
+    eeprom_object.error_log.irr_struct.forced_group[water_threshold_group - 1] = true;      //-1 as 0 indexed
+    eeprom_object.error_log.irr_struct.forced_group_code[water_threshold_group - 1] = 101;  // "e" for error
+  }
+
+  if ((count_outliers >= buff_count) && count > 3) {                                        //force irrigation event if half or more of the buff_count are outliers if there are 3 or more sensors connected.
+    eeprom_object.error_log.irr_struct.forced_group[water_threshold_group - 1] = true;      //-1 as 0 indexed
+    eeprom_object.error_log.irr_struct.forced_group_code[water_threshold_group - 1] = 111;  // "o" for outlier
+
+    Serial.println(F("Number of outliers >= one-half of non-error sensors AND the number of non-error sensors is > 3. Check and see whether to force irrigation event or encountering error."));
+    Serial.print(F("Raw group mean is equal to: "));
+    Serial.println(raw_group_mean);
+    if ((raw_group_mean <= 0 && raw_group_mean >= -239) && (raw_group_mean < set_water_threshold)) {
+      Serial.print(F("The raw group mean is reasonable and is lower than the set water threshold for the group."));
+      Serial.println(F("  Proceed with forced irrigation event, note this result is possible with poor connection of ALL WM sensors in the group."));
+      force_irr = true;
+    } else {
+      Serial.println(F("The raw group mean is not within the measurement range of WM sensors OR is higher than the set water threshold for the group."));
+      Serial.println(F("Force irrigation event prevented."));
+      eeprom_object.error_log.irr_struct.forced_group_code[water_threshold_group - 1] = 104;  // "h" for higher than set threshold
+    }
+  }
+
+  Serial.print(F("buff_sum:  "));
+  Serial.println(buff_sum);
+  Serial.print(F("buff_count:  "));
+  Serial.println(buff_count);
+  //uint8_t buffered_group_mean = 0;
+  float buffered_group_mean;
+  if (buff_count == 0) {
+    buffered_group_mean = 0.00;
+  } else {
+    buffered_group_mean = (buff_sum / buff_count) * -1;  //calculate the mean of the of the desired channels, negative 1 here as kpa is in tension
+  }
+  Serial.print(F("Buffered Group mean: "));
+  Serial.println(buffered_group_mean);
+
+  if (force_irr) {
+    Serial.println("Force irrigation event detected.");  //Give indication you are forcing the irrigation event
+    buffered_group_mean = -999;
+  }
+
+  return buffered_group_mean;  //return the requested group_mean
+}
+
+//-----Compile Data-------------------------------------------------
+void compile() {
+
+  battV = calcbattV();
+  Serial.print(F("Battery Pack Voltage:  "));
+  Serial.println(battV);
+
+  data = "";
+  header = "";
+  delay(20);
+
+  header += '[';  //Add in String start indicator '[' and spacers "~~~" for packet # as in RadioString library
+  header += '~';
+  header += '~';
+  header += '~';
+
+  header += eeprom_object.IDnum;
+  header += ',';
+
+  if (battV <= lowBatt) {
+    header += "Low Battery Voltage: ";
+    eeprom_object.error_log.pwr_struct.bat_low = true;
+    eeprom_object.error_log.write_log = true;
+    battLow = true;  // will be depreciated
+  }
+  header += battV;
+
+  header += ',';
+  header += mnths;
+  header += '/';
+  header += days;
+  header += '/';
+  header += yrs;
+  header += ' ';
+  header += hrs;
+  header += ':';
+  if (mins < 10) header += "0";
+  header += mins;
+  header += ':';
+  if (secs < 10) header += "0";
+  header += secs;
+  header += ',';
+  delay(20);
+
+  data = header + WM_string + irrigation_prompt_string + temperature_string;  //Add in responses from sensors
+
+  delay(50);
+
+  data.remove(data.length() - 1, 1);  //remove last comma
+  delay(10);
+  data.concat(']');  //Add in an indicator for the end of the data string
+
+  // End of data string
+  delay(10);
+  Serial.println(data);
+  delay(50);
+}
+
+
+
+bool check_whether_address_seen(byte addr[8], byte addresses[16][8], int num_sensors_passed){
+  bool address_seen = false;
+  for (int i = 0; i < num_sensors_passed; i++){
+    if (memcmp(addr, addresses[i], 8) == 0){
+      address_seen = true;
+    }
+  }
+
+  return address_seen;
+}
+
+
+// FIXME: Refactor
+//-----Identification of ds18b20 addresses-----------
+void Identify_1WireDevices() {
+  byte addr[8];
+  byte addresses[16][8];
+  // byte addr0[8];
+  // byte addr1[8];
+  // byte addr2[8];
+  // byte addr3[8];
+  // byte addr4[8];
+  // byte addr5[8];
+  // byte addr6[8];
+  // byte addr7[8];
+  // byte addr8[8];
+  // byte addr9[8];
+  // byte addr10[8];
+  // byte addr11[8];
+  // byte addr12[8];
+  // byte addr13[8];
+  // byte addr14[8];
+  // byte addr15[8];
+
+  int num_sensors_passed = 0;
+  // int intSensorsPassed = 0;
+
+  Serial.println(F("Looking for 1-wire devices..."));
+  delay(1000);
+  Serial.println(F("Connect sensor 1..."));
+  do {
+    while (oneWire.search(addr)) {
+      if (OneWire::crc8(addr, 7) != addr[7]) {
+        Serial.print(F("CRC is not valid!\n"));
+        Serial.println();
+        Serial.print(F("CRC:  "));
+        Serial.print(OneWire::crc8(addr, 7));
+        Serial.print(F("addr: "));
+        Serial.println(addr[7]);
+        delay(100);
+        break;
+      }
+      if (addr[0] != 0x28) {
+        Serial.println(" Not a DS18b20");  //The least significant byte of the DS18b20 should be 0x28
+        break;
+      }
+
+      // FIXME: Hasn't been tested yet
+      if (!check_whether_address_seen(addr, addresses, num_sensors_passed)) {
+            memcpy(addresses[num_sensors_passed], addr, 8);  //Store the address in the next available location
+            num_sensors_passed++;
+            Serial.print("Assigned to " + String(num_sensors_passed - 1) + ": ");
+            printAddress(addresses[num_sensors_passed]);
+            Serial.println();
+            Serial.println("Sensors passed = " + String(num_sensors_passed) + "\n");
+            Serial.println("Add sensor  " + String(num_sensors_passed + 1));
+      } 
+
+
+      // Above here just checks first element of CRC
+      // switch (intSensorsPassed) {
+      //   case 0:
+      //     memcpy(addr0, addr, 8);  //Store the first address in addr0
+      //     intSensorsPassed++;
+      //     Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //     printAddress(addr0);
+      //     Serial.println();
+      //     Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //     Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     break;
+
+      //   case 1:
+      //     //check if the address was earlier identified
+      //     if (!check_whether_address_seen(addr, addresses, intSensorsPassed)) {
+      //       memcpy(addresses[num_sensors_passed], addr, 8);  //Store the addess in the next available location
+      //       num_sensors_passed++;
+      //       Serial.print("Assigned to " + String(num_sensors_passed - 1) + ": ");
+      //       printAddress(addresses[num_sensors_passed]);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(num_sensors_passed) + "\n");
+      //       Serial.println("Add sensor  " + String(num_sensors_passed + 1));
+      //       // memcpy(addr1, addr, 8);  //Store the addess in addr1
+      //       // intSensorsPassed++;
+      //       // Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       // printAddress(addr1);
+      //       // Serial.println();
+      //       // Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       // Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 2:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0)) {
+      //       memcpy(addr2, addr, 8);  //Store the addess in addr2
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr2);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 3:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0)) {
+      //       memcpy(addr3, addr, 8);  //Store the addess in addr3
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr1);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 4:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0)) {
+      //       memcpy(addr4, addr, 8);  //Store the addess in addr4
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr4);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 5:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0) && (memcmp(addr, addr4, 8) != 0)) {
+      //       memcpy(addr5, addr, 8);  //Store the addess in addr5
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr5);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 6:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0) && (memcmp(addr, addr4, 8) != 0) && (memcmp(addr, addr5, 8) != 0)) {
+      //       memcpy(addr6, addr, 8);  //Store the addess in addr6
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr6);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 7:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0) && (memcmp(addr, addr4, 8) != 0) && (memcmp(addr, addr5, 8) != 0) && (memcmp(addr, addr6, 8) != 0)) {
+      //       memcpy(addr7, addr, 8);  //Store the addess in addr7
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr7);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 8:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0) && (memcmp(addr, addr4, 8) != 0) && (memcmp(addr, addr5, 8) != 0) && (memcmp(addr, addr6, 8) != 0) && (memcmp(addr, addr7, 8) != 0)) {
+      //       memcpy(addr8, addr, 8);  //Store the addess in addr8
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr8);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 9:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0) && (memcmp(addr, addr4, 8) != 0) && (memcmp(addr, addr5, 8) != 0) && (memcmp(addr, addr6, 8) != 0) && (memcmp(addr, addr7, 8) != 0) && (memcmp(addr, addr8, 8) != 0)) {
+      //       memcpy(addr9, addr, 8);  //Store the addess in addr9
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr9);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 10:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0) && (memcmp(addr, addr4, 8) != 0) && (memcmp(addr, addr5, 8) != 0) && (memcmp(addr, addr6, 8) != 0) && (memcmp(addr, addr7, 8) != 0) && (memcmp(addr, addr8, 8) != 0) && (memcmp(addr, addr9, 8) != 0)) {
+      //       memcpy(addr10, addr, 8);  //Store the addess in addr10
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr10);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 11:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0) && (memcmp(addr, addr4, 8) != 0) && (memcmp(addr, addr5, 8) != 0) && (memcmp(addr, addr6, 8) != 0) && (memcmp(addr, addr7, 8) != 0) && (memcmp(addr, addr8, 8) != 0) && (memcmp(addr, addr9, 8) != 0) && (memcmp(addr, addr10, 8) != 0)) {
+      //       memcpy(addr11, addr, 8);  //Store the addess in addr11
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr11);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 12:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0) && (memcmp(addr, addr4, 8) != 0) && (memcmp(addr, addr5, 8) != 0) && (memcmp(addr, addr6, 8) != 0) && (memcmp(addr, addr7, 8) != 0) && (memcmp(addr, addr8, 8) != 0) && (memcmp(addr, addr9, 8) != 0) && (memcmp(addr, addr10, 8) != 0) && (memcmp(addr, addr11, 8) != 0)) {
+      //       memcpy(addr12, addr, 8);  //Store the addess in addr12
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr12);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 13:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0) && (memcmp(addr, addr4, 8) != 0) && (memcmp(addr, addr5, 8) != 0) && (memcmp(addr, addr6, 8) != 0) && (memcmp(addr, addr7, 8) != 0) && (memcmp(addr, addr8, 8) != 0) && (memcmp(addr, addr9, 8) != 0) && (memcmp(addr, addr10, 8) != 0) && (memcmp(addr, addr11, 8) != 0) && (memcmp(addr, addr12, 8) != 0)) {
+      //       memcpy(addr13, addr, 8);  //Store the addess in addr13
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr13);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 14:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0) && (memcmp(addr, addr4, 8) != 0) && (memcmp(addr, addr5, 8) != 0) && (memcmp(addr, addr6, 8) != 0) && (memcmp(addr, addr7, 8) != 0) && (memcmp(addr, addr8, 8) != 0) && (memcmp(addr, addr9, 8) != 0) && (memcmp(addr, addr10, 8) != 0) && (memcmp(addr, addr11, 8) != 0) && (memcmp(addr, addr12, 8) != 0) && (memcmp(addr, addr13, 8) != 0)) {
+      //       memcpy(addr14, addr, 8);  //Store the addess in addr14
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr14);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      //   case 15:
+      //     //check if the address was earlier identified
+      //     if ((memcmp(addr, addr0, 8) != 0) && (memcmp(addr, addr1, 8) != 0) && (memcmp(addr, addr2, 8) != 0) && (memcmp(addr, addr3, 8) != 0) && (memcmp(addr, addr4, 8) != 0) && (memcmp(addr, addr5, 8) != 0) && (memcmp(addr, addr6, 8) != 0) && (memcmp(addr, addr7, 8) != 0) && (memcmp(addr, addr8, 8) != 0) && (memcmp(addr, addr9, 8) != 0) && (memcmp(addr, addr10, 8) != 0) && (memcmp(addr, addr11, 8) != 0) && (memcmp(addr, addr12, 8) != 0) && (memcmp(addr, addr13, 8) != 0) && (memcmp(addr, addr14, 8) != 0)) {
+      //       memcpy(addr15, addr, 8);  //Store the addess in addr15
+      //       intSensorsPassed++;
+      //       Serial.print("Assigned to " + String(intSensorsPassed - 1) + ": ");
+      //       printAddress(addr15);
+      //       Serial.println();
+      //       Serial.println("Sensors passed = " + String(intSensorsPassed) + "\n");
+      //       Serial.println("Add sensor  " + String(intSensorsPassed + 1));
+      //     }  //End if the new address obtained is the same as the last iteration of intSensorsPassed
+      //     break;
+
+      // }  // End switch case
+    }    // End while sensors Passed
+    delay(500);
+  } while (num_sensors_passed < eeprom_object.num_ds18b20);  //This would hang up the program until this number is passed...
+                                                           //Store the detected addresses in EEPROM
+  
+  
+  // Planned Change: new 2D arrays for addresses
+  for (int z = 0; z < 8; z++) {
+    for (int i = 0; i < 16; i++){
+      eeprom_object.ds18b20_sensor_addresses[i][z] = addresses[i][z]; 
+    }
+    // eeprom_object.ds18b20_sensor0[z] = addr0[z];
+    // eeprom_object.ds18b20_sensor1[z] = addr1[z];
+    // eeprom_object.ds18b20_sensor2[z] = addr2[z];
+    // eeprom_object.ds18b20_sensor3[z] = addr3[z];
+    // eeprom_object.ds18b20_sensor4[z] = addr4[z];
+    // eeprom_object.ds18b20_sensor5[z] = addr5[z];
+    // eeprom_object.ds18b20_sensor6[z] = addr6[z];
+    // eeprom_object.ds18b20_sensor7[z] = addr7[z];
+    // eeprom_object.ds18b20_sensor8[z] = addr8[z];
+    // eeprom_object.ds18b20_sensor9[z] = addr9[z];
+    // eeprom_object.ds18b20_sensor10[z] = addr10[z];
+    // eeprom_object.ds18b20_sensor11[z] = addr11[z];
+    // eeprom_object.ds18b20_sensor12[z] = addr12[z];
+    // eeprom_object.ds18b20_sensor13[z] = addr13[z];
+    // eeprom_object.ds18b20_sensor14[z] = addr14[z];
+    // eeprom_object.ds18b20_sensor15[z] = addr15[z];
+  }
+  Serial.println(F("Iterative addressing of ds18b20 sensors complete."));
+}
+
+bool configuration_changed = false;
+// Planned Change: improve saving functionality, possibly use a boolean
+
+//-----Menu Routine----------------------------------------------------
+void menu() {
+
+  if (Serial.available() > 0) {
+    Serial.read();  //clear serial input buffer
+  }
+
+  itoa(eeprom_object.IDnum, a, 10);  //convert IDnum to character array
+
+  if (eeprom_object.IDnum < 10) {  // for naming filename
+    filename[0] = '0';             // put into filename[] array
+    filename[1] = '0';
+    filename[2] = a[0];
+  } else if (eeprom_object.IDnum < 100) {
+    filename[0] = '0';  // put into filename[] array
+    filename[1] = a[0];
+    filename[2] = a[1];
+  } else {
+    filename[0] = a[0];  // put into filename[] array
+    filename[1] = a[1];
+    filename[2] = a[2];
+  }
+
+  print_board_info();
+  print_menu_options();
 
   menutimeout = millis() + 60000;  //wait for user input, was 10 sec but 60 sec is better for new users
   while (millis() < menutimeout) {
@@ -1042,111 +2547,17 @@ void menu() {
 
   switch (menuinput) {  //switch cases for menu input, Note the case# corresponds to input in ASCII format
     case 98:            //"b" for iterating connection of ds18b20 temperature sensors
-      Serial.println(F("Iterative identification of ds18b20 temperature sensors."));
-      get_integer_input();  //otherwise the first input is always 0?
-      Serial.println(F("If you would like to continue, press 1. To return to main menu, press any other character."));
-      get_integer_input();
-      // do not specify int user_resp = indata; // for some reason it does not allow menu access, define the integer then change it.
-      int user_resp;
-      delay(100);
-      user_resp = indata;
-      delay(100);
-      if (user_resp != 1) {
-        menu();
-        break;
-      } else {
-        Serial.println(F("Continuing with iterative identificaiton of ds18b20 temperature sensors..."));
-        delay(1000);
-        Serial.println(F("How many ds18b20 are being connected?"));
-        get_integer_input();
-        eeprom_object.num_ds18b20 = indata;
-
-        if (eeprom_object.num_ds18b20 == 0) {
-          Serial.println(F("As 0 external temperature sensors are being connected, temperature correction will be made using the Real Time Clock inside the environmental enclosure."));
-          menu();
-          break;
-        }
-
-        Serial.print(F("User must complete identification of "));
-        Serial.print(eeprom_object.num_ds18b20);
-        Serial.println(F(" ds18b20 temperature sensors."));
-        Serial.println(F("Prepare to plug in sensors..."));
-        delay(2000);
-        Identify_1WireDevices();
-      }
+      identify_temperature_sensors();
       menu();
       break;
 
     case 99:  // "c" for set clock-----------------------------------------------
-
-      Serial.println(F("Set clock:  "));
-      get_integer_input();  //otherwise the first input is always 0?
-      Serial.print(F("  input month: "));
-      get_integer_input();
-      mnths = indata;
-      Serial.print(F("  input day:    "));
-      get_integer_input();
-      days = indata;
-      Serial.print(F("  input year:   "));
-      get_integer_input();
-      yrs = indata;
-      Serial.print(F("  input hour:   "));
-      get_integer_input();
-      hrs = indata;
-      Serial.print(F("  input minute: "));
-      get_integer_input();
-      mins = indata;
-      Serial.print(F(" input second: "));
-      get_integer_input();
-      secs = indata;
-
-      rtc.adjust(DateTime(yrs, mnths, days, hrs, mins, secs));
-      delay(50);
-
+      set_clock();
       menu();
       break;
 
     case 112:               // "p" for prime pumps--------------------------------
-      get_integer_input();  //otherwise the first input is always 0?
-      Serial.flush();
-      Serial.println(F("Are you sure you want to cycle the pumps?"));
-      Serial.println(F("Make sure the lines are oriented where outflow is desired!"));
-      Serial.println(F("Type YES to confirm priming of pumps"));
-
-      charinput();
-      if (charInput[0]) {
-        char answer[4]{ 0 };
-        byte i = 0;
-        for (int i = 0; i < 3; i++) {
-          if (charInput[i] != 0) {
-            answer[i] = charInput[i];
-          }
-        }
-        Serial.print(F("Answer: "));
-        Serial.println(answer);
-        if (strcmp(answer, "YES") == 0) {
-          Serial.println(F("Priming Pumps..."));
-
-          digitalWrite(in1, HIGH);  //provide power to relay/switch on respective pin, relays are configured active when HIGH. pumps should be normally open & circuit closed when powered
-          delay(10000);
-          digitalWrite(in1, LOW);  //power off
-          delay(2000);
-          digitalWrite(in2, HIGH);
-          delay(10000);
-          digitalWrite(in2, LOW);
-          delay(2000);
-          digitalWrite(in3, HIGH);
-          delay(10000);
-          digitalWrite(in3, LOW);
-          delay(2000);
-          digitalWrite(in4, HIGH);
-          delay(10000);
-          digitalWrite(in4, LOW);
-          Serial.println(F("Pump priming routine completed."));
-        } else {
-          Serial.println(F("Answer was not YES, pump priming failed to initialize."));
-        }
-      }
+      pump_priming_prompt();
       menu();
       break;
 
@@ -1157,75 +2568,12 @@ void menu() {
       break;
 
     case 103:  // "g" for enabling or disabling Radio Transmission.
-      Serial.println(F("Would you like to enable radio transmisison?"));
-      get_integer_input();  //otherwise first is always 0?
-      Serial.println(F("Type 1 to enable radio transmissions or 0 to disable radio transmissions."));
-      get_integer_input();
-      eeprom_object.toggle_radio = indata;
-
-      if (indata != 1) {
-        Serial.println(F("Radio transmissions DISABLED."));
-        driver.sleep();  //Puts radio to sleep.
-      } else {
-        Serial.println(F("Radio transmissions ENABLED."));
-        RH_RF95 driver(4, 2);
-        RHReliableDatagram manager(driver, radioID);  //Set up the radio manager
-        if (!driver.init()) {
-          Serial.println(F("Radio initialization failed."));
-        }
-        if (driver.init()) {
-          Serial.println(F("Radio initilization successful."));
-        }
-      }
+      radio_prompt();
       menu();
       break;
 
     case 104:  // "h" for enabling or disabling troubleshooting/demo continuous loop.
-      Serial.println(F("Would you like to enter troublesooting mode?"));
-      Serial.println(F("Troubleshooting mode does not save data to sdcard but DOES send radio transmissions."));
-      Serial.println();
-      Serial.println(F("You may also toggle the printing of extra runtime notes to help with troubleshooting."));
-      Serial.println(F("This can be done in Troubleshooting mode or during normal operation."));
-      get_integer_input();  //otherwise first is always 0?
-      delay(2000);
-
-      Serial.println(F("Would you like to enable runtime notes?"));
-      Serial.println(F("Enter 1 to enable runtime notes or 0 to disable runtime notes."));
-      Serial.print(F("Current runtime notes Setting:  "));
-      if (eeprom_object.run_notes) {
-        Serial.println(F("ON."));
-      } else {
-        Serial.println(F("OFF."));
-      }
-      get_integer_input();
-
-      if (indata == 1 || indata == 0) {
-        eeprom_object.run_notes = indata;
-      } else {
-        Serial.println(F("Invalid Entry, returning to main menu."));
-        menu();
-        break;
-      }
-      delay(2000);
-
-      Serial.println(F("If you would like to enable troubleshooting mode enter 1, otherwise enter 0 to enable regular operation."));
-      Serial.println(F("Enter any other key to return to the main menu."));
-      get_integer_input();
-
-      if (indata == 1 || indata == 0) {
-        eeprom_object.demo_mode = indata;
-      } else {
-        menu();
-        break;
-      }
-
-      if (eeprom_object.demo_mode) {  //if demo_mode is true (1)...
-        Serial.println(F("Troubleshooting mode enabled."));
-        delay(1000);
-      } else {
-        Serial.println(F("Regular operation enabled."));
-        delay(1000);
-      }
+      troubleshooting_prompt();
       menu();
       break;
 
@@ -1234,40 +2582,13 @@ void menu() {
       Serial.println(F("Set network ID numbers (ProjectID, BoardID, NodeID, GatewayID):"));  // set ProjectID, BoardIDnum, nodeID, and gatewayID numbers
       get_integer_input();                                                                   //otherwise the first input is always 0?
 
+      set_project_id();
 
-      Serial.print(F(" Project ID:     "));  // get projectID up to numChars length
-      Serial.flush();
-      charinput();
-      if (charInput[0]) {
-        byte i = 0;
-        for (int i = 0; i < numChars; i++) {
-          if (charInput[i] != 0 || charInput[i] != '\0') {
-            eeprom_object.projectID[i] = charInput[i];
-          } else {
-            eeprom_object.projectID[i] = '\0';
-            break;
-          }
-        }
-      }
+      set_board_id();
 
+      set_node_id();
 
-      Serial.print(F(" Board ID:     "));  // get BoardID
-      Serial.flush();
-      get_integer_input();  // decode user input
-      eeprom_object.IDnum = indata;
-
-
-
-      Serial.print(F(" Node ID:  "));  // get nodeID
-      Serial.flush();
-      get_integer_input();  // decode user input
-      eeprom_object.nodeID = indata;
-
-
-      Serial.print((" Gateway ID:  "));  // get GatewayID
-      Serial.flush();
-      get_integer_input();  // decode user input
-      eeprom_object.gatewayID = indata;
+      set_gateway_id();
 
       manager.setThisAddress(eeprom_object.nodeID);  // Set Radio Address
 
@@ -1349,34 +2670,7 @@ void menu() {
       break;
 
     case 101:  // "e" for erase data on sd card-------------------------------------------
-      Serial.println(F("Erase data on sd card..."));
-      Serial.print(F("Currently Writing to: "));
-      Serial.println(filename);
-      Serial.print(F("Do you want to delete: "));
-      Serial.print(filename);
-      Serial.println(F("? Type YES to confirm deletion of this file."));
-
-      get_integer_input();  //Otherwise first input is always 0?
-      Serial.flush();
-      charinput();
-      if (charInput[0]) {
-        char erase[4]{ 0 };
-        byte i = 0;
-        for (int i = 0; i < 3; i++) {
-          if (charInput[i] != 0) {
-            erase[i] = charInput[i];
-          }
-        }
-        Serial.print(F("erase:  "));
-        Serial.println(erase);
-        if (strcmp(erase, "YES") == 0) {
-          SD.remove(filename);
-          Serial.println(F("Data File deleted"));
-          eeprom_object.firstTime = true;  //Return firsttime to true so header is printed when first writing to file
-        } else {
-          Serial.println(F("If condition not satisfied"));
-        }
-      }
+      erase_sd();
       menu();
       break;
 
@@ -1601,7 +2895,49 @@ void get_integer_input() {
   delay(10);
 }
 
+// Menu setting for irrigation sensor/timer based
+
+
+// States: IRRIGATING_S(sensor based irrigation), IRRIGATING_M(measurement based irrigation), 
 void events_loop(){
+  
+  // Check match fields
+  // If sensor based irrigation needs to occur for certain group, schedule singular events to do so
+  // Can have custom calcualtions for event span based on various factors
+  // Add these events to queue
+
+  // Check for scheduled events
+  // Add to queue
+
+  // Find earliest event in queue
+  // process
+
+  // If 
+
+  check_match_fields();
+
+  // Function Name: 
+  // First, check whether sensor based irrigation needs to be done based on the match fields
+  // If it does, perform sensor based irrigation
+
+  // If not, check for other events and perform them
+
+  sensor_based_irrigation();
+
+
+  check_for_measurement_events();
+
+
+
+  // Check for timed events
+
+  // Keep track of state
+
+
+
+
+
+
   // state is initally IDLE
   curr_state = IDLE;
 
@@ -1614,8 +2950,12 @@ void events_loop(){
     // Check to make sure the valve is closed
     // Maybe attach another component that allows verififcant (set one of 4 output pins as input to verify valve state)
     //maintain_valves_open();
+
+
+    // Prioritize scheduled irrigation events
     for (int i = 0; i < eeprom_object.events_queue_size; i++){
       // Create a new function that finds an event by id/reference number and returns the pointer and input into this
+      // get_event_by_id 
       handle_event(get_event_by_id(eeprom_object.events_queue[i]));
     }
     // subfunctions will update num_events and we will keep track of events to remove
@@ -1701,10 +3041,10 @@ void reset_events_queue(){
   eeprom_object.events_queue_size = 0;
 }
 
-event* get_event_by_id(int id){
+int get_index_of_event_by_id(int id){
   for (int i = 0; i < eeprom_object.num_events; i++){
     if (events[i]->event_id == id){
-      return event;
+      return i;
     }
   }
 }
@@ -1714,17 +3054,309 @@ event* get_event_by_id(int id){
 
 // What states can I change to based on current state
 
-void handle_event(event* e){
-  switch(e->event_type):
-    case 0:
-      // Check for radio events, can check state within state
-      // example: taking measurement and checking event time
-      perform_scheduled_irrigation(e);
-    case 4:
-      //radio_event(e);
+// FIXME: Refactor and complete this function later
+// void handle_event(event* e){
+//   switch(e->event_type):
+//     case 0:
+//       // Check for radio events, can check state within state
+//       // example: taking measurement and checking event time
+//       perform_scheduled_irrigation(e);
+//       break;
+//     case 4:
+//       //radio_event(e);
+//       break;
+// }
 
+
+
+
+/*
+Start of valve management code.
+*/
+
+void valve_menu(){
+  Serial.println(F("Open_Irr Valve Menu..."));
+  Serial.println();
+
+  Serial.println(F("Make a selection."));
+  Serial.println(F("1    <-     View Current Valves"));
+  Serial.println(F("2    <-     Add New Valve"));
+  Serial.println(F("3    <-     Remove Valve"));
+
+  get_integer_input();  //from existing code using global int "indata"
+
+  int choice = indata;
+  if (choice == 1){
+    print_all_valves();
+  }
+  else if (choice == 2){
+    add_new_valve();
+  }
+  else if (choice == 3){
+    remove_valve();
+  }
 }
 
+void add_new_valve(){
+  String model, link, power, valve_fittings, duty_cycle_type;
+  int duty_cycle_ms, min_pressure_psi, max_pressure_psi;
+  bool latching, idle_state_normally_closed, wiring_three_way;
+  float resistance_ohms;
+  
+  JsonObject new_valve = predefined_valves_array.createNestedObject();
+  new_valve["id"] = eeprom_object.current_valve_id;
+
+  Serial.println(F("Enter the model of the valve: "));
+  model = Serial.readString();
+  new_valve["model"] = model;
+
+  Serial.println(F("Enter the link of the valve: "));
+  link = Serial.readString();
+  new_valve["link"] = link;
+
+  Serial.println(F("Enter the power of the valve in DC: "));
+  power = Serial.readString();
+  new_valve["power"] = power;
+
+  Serial.println(F("Enter the fittings of the valve in DC: "));
+  valve_fittings = Serial.readString();
+  new_valve["valve_fittings"] = valve_fittings;
+
+  Serial.println(F("If the valve is latching, enter 1, otherwise enter false: "));
+  get_integer_input();
+  if (indata == 1){
+    latching = true;
+  }
+  else{
+    latching = false;
+  }
+  new_valve["latching"] = latching;
+
+  Serial.println(F("If the idle state is normally closed, enter 1, otherwise enter false: "));
+  get_integer_input();
+  if (indata == 1){
+    idle_state_normally_closed = true;
+  }
+  else{
+    idle_state_normally_closed = false;
+  }
+  new_valve["idle_state_normally_closed"] = idle_state_normally_closed;
+
+
+  Serial.println(F("Enter the duty cycle type: "));
+  duty_cycle_type = Serial.readString();
+  new_valve["duty_cycle_type"] = duty_cycle_type;
+
+  Serial.println(F("Enter the duty cycle time in ms: "));
+  get_integer_input();
+  duty_cycle_ms = indata;
+  new_valve["duty_cycle_ms"] = duty_cycle_ms;
+
+  Serial.println(F("If there is three way wiring, enter 1, otherwise enter 0: "));
+  get_integer_input();
+  if (indata == 1){
+    wiring_three_way = true;
+  }
+  else{
+    wiring_three_way = false;
+  }
+  new_valve["wiring_three_way"] = wiring_three_way;
+
+  Serial.println(F("Enter the minimum pressure in PSI: "));
+  get_integer_input();
+  min_pressure_psi = indata;
+  new_valve["pressure_min_psi"] =  min_pressure_psi;
+
+  Serial.println(F("Enter the maximum pressure in PSI: "));
+  get_integer_input();
+  max_pressure_psi = indata;
+  new_valve["pressure_max_psi"] = max_pressure_psi;
+
+  // Need to use float input
+  Serial.println(F("Enter the maximum pressure in PSI: "));
+  get_integer_input();
+  max_pressure_psi = indata;
+  new_valve["resistance_ohms"] = resistance_ohms;
+  
+  eeprom_object.num_valves++;
+  eeprom_object.current_valve_id++;
+}
+
+void remove_valve(){
+  // https://arduinojson.org/v6/api/jsonarray/remove/
+  // ArduinoJson::Remove causes memory leaks but this might be fixable using the garbage collector?
+
+  Serial.println(F("Enter the index of the valve you want to remove (note predefined valves cannot be removed):"));
+  get_integer_input();
+  int choice = indata;
+
+  predefined_valves_array.remove(choice);
+  eeprom_object.num_valves--;
+}
+
+int get_valve_procedure(int valve_id){
+  for (JsonObject o: predefined_valves_array){
+    if (o["id"] == valve_id){
+      serializeJsonPretty(o, Serial);
+      //Serial.println(o["id"]);
+      bool idle_state_normally_closed = o["idle_state_normally_closed"];
+      bool latching = o["latching"];
+      long duty_cycle_ms = o["duty_cycle_ms"];
+
+      // Serial.println(idle_state_normally_closed);
+      // Serial.println(latching);
+      Serial.println(duty_cycle_ms);
+
+      if (idle_state_normally_closed){
+        if (latching){
+          return 1;
+        }
+        else{
+          return 2;
+        }
+      }
+      else{
+        if (latching){
+          return 3;
+        }
+        else{
+          return 4;
+        }
+      }
+    }
+  }  
+}
+
+// Saves valve procedure integers for all valves to EEPROM
+void set_all_valve_integers(){
+  for (JsonObject o: predefined_valves_array){
+      bool idle_state_normally_closed = o["idle_state_normally_closed"];
+      bool latching = o["latching"];
+      int duty_cycle_ms = o["duty_cycle_ms"];
+      int valve_id = o["valve_id"];
+      if (idle_state_normally_closed){
+        if (latching){
+          eeprom_object.valve_procedure_integers[valve_id] = 1;
+        }
+        else{
+          eeprom_object.valve_procedure_integers[valve_id] = 1;
+        }
+      }
+      else{
+        if (latching){
+          eeprom_object.valve_procedure_integers[valve_id] = 1;
+        }
+        else{
+          eeprom_object.valve_procedure_integers[valve_id] = 1;
+        }
+      }
+  }
+}
+
+// void perform_valve_procedure(int procedure){
+//   // idle state normally closed (circuit is closed) and latching
+//   if (procedure == 1){
+//     // can turn 
+//   }
+//   else if (procedure == 2){
+
+//   }
+//   else if (procedure == 3){
+
+//   }
+//   else if (procedure == 4){
+
+//   }
+//   else{
+//     System.println("Invalid procedure");
+//   }
+// }
+
+void print_all_valves(){
+  serializeJsonPretty(predefined_valves_array, Serial);
+}
+
+void read_valve_data(){
+  Serial.println(F("Reading in valve data from file."));
+  StaticJsonDocument<10000> valveDoc;
+  File valves_file = SD.open("valves.txt", FILE_READ);
+  char buf[10000];
+  valves_file.read(buf, 10000);
+  DeserializationError error = deserializeJson(valveDoc, buf);
+
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+
+  for (JsonObject o: valveDoc["userDefinedValves"].as<JsonArray>()){
+    JsonObject user_defined_valve = predefined_valves_array.createNestedObject();
+    user_defined_valve["id"] = o["id"];
+    user_defined_valve["model"] = o["model"];
+    user_defined_valve["link"] = o["link"];
+    user_defined_valve["power"] = o["power"];
+    user_defined_valve["valve_fittings"] = o["valve_fittings"];
+    user_defined_valve["latching"] = o["latching"];
+    user_defined_valve["idle_state_normally_closed"] = o["idle_state_normally_closed"];
+    user_defined_valve["duty_cycle_type"] = o["duty_cycle_type"];
+    user_defined_valve["duty_cycle_ms"] = o["duty_cycle_ms"];
+    user_defined_valve["wiring_three_way"] = o["wiring_three_way"];
+    user_defined_valve["pressure_min_psi"] =  o["pressure_min_psi"];
+    user_defined_valve["pressure_max_psi"] = o["pressure_max_psi"];
+    user_defined_valve["resistance_ohms"] = o["resistance_ohms"];
+  }
+}
+
+void write_valve_data(){
+  Serial.println(F("Writing valve data to file."));
+  StaticJsonDocument<10000> valveDoc;
+
+  JsonArray user_defined_valves_array = valveDoc.createNestedArray("userDefinedValves");
+  // Only user defined valves will be written to SD card
+  // Start at inbdex 5 onwards for now, maybe change to a variable in eeprom if possible
+  int i = 0;
+  // Maybe rename predefined_valves_array as it stores both user and predefined valves
+  num_predefined_valves;
+  for (JsonObject o: predefined_valves_array){
+    if (i >= num_predefined_valves()){
+      JsonObject user_defined_valve = user_defined_valves_array.createNestedObject();
+      user_defined_valve["id"] = o["id"];
+      user_defined_valve["model"] = o["model"];
+      user_defined_valve["link"] = o["link"];
+      user_defined_valve["power"] = o["power"];
+      user_defined_valve["valve_fittings"] = o["valve_fittings"];
+      user_defined_valve["latching"] = o["latching"];
+      user_defined_valve["idle_state_normally_closed"] = o["idle_state_normally_closed"];
+      user_defined_valve["duty_cycle_type"] = o["duty_cycle_type"];
+      user_defined_valve["duty_cycle_ms"] = o["duty_cycle_ms"];
+      user_defined_valve["wiring_three_way"] = o["wiring_three_way"];
+      user_defined_valve["pressure_min_psi"] =  o["pressure_min_psi"];
+      user_defined_valve["pressure_max_psi"] = o["pressure_max_psi"];
+      user_defined_valve["resistance_ohms"] = o["resistance_ohms"];
+    }
+    i++;
+  }
+
+  char json_array[10000];  // char array large enough
+  Serial.print(F("Saving new Event as Json..."));
+  // Serial.println();
+  serializeJson(valveDoc, json_array);  //copy the info in the buffer to the array to use writeFile below
+  //serializeJson(eventsLog, Serial);
+  // //Serial.println(s);
+  //writeFileSD("events.txt", json_array);  //filename limit of 13 chars
+  
+  SD.remove("valves.txt");
+  writeFileSD("valves.txt", json_array);
+}
+
+/*
+End of valve management code.
+*/
+
+/*
+Start of event management code.
+*/
 
 //To be placed in menu() -> maybe rename to eventScheduleMenu?
 void events_menu() {
@@ -1758,6 +3390,8 @@ void events_menu() {
       Serial.println(F("Enter the index number of scheduled event to remove."));
       get_integer_input();
       remove_event(indata);
+      Serial.println(F("Updated schedule"));
+      print_all_events();
     }
   }
   else if (indata == 2) {
@@ -1804,152 +3438,10 @@ void event_scheduler_menu(){
   //Exit scope of permit/deny window (event type 2)
 }
 
-void valve_menu(){
-  Serial.println(F("Valve Configuration Menu."));
-  Serial.println(F("0     <-     Create a new valve configuration"));
-  Serial.println(F("1     <-     Delete an existing valve"));
-
-  get_integer_input();
-
-  int choice = indata;
-
-  if (choice == 0){
-    new_valve_creation_menu();
-  }
-  
-}
-
-void valve_creation_menu(){
-
-  // Select valve, give users option to print out header file, option - my valve isn't listed, append new valve
-  // Once user specifies new valves, store only new valves in txt file on SD card like with events and predefined valves will be within the header file
-  int valve_id, power, num_valve_fittings, inrush_current_amps, holding_current_amps, duty_cycle_type, duty_cycle_ratio, min_pressure_psi, max_pressure_psi, resistance_ohms;
-  string model, link;
-  bool idle_state_is_closed, return_to_state_logic_exists, has_three_way_wiring; 
-
-  char response[20]{ 0 };
-  //byte i = 0;
-
-  Serial.println(F("Enter the valve model:"));
-  while (Serial.available() == 0){};
-  String model = Serial.readString();
-
-  Serial.println(F("Enter the valve link:"));
-  while (Serial.available() == 0){};
-  String link = Serial.readString();
-
-  Serial.println(F("Enter the valve power:"));
-  get_integer_input();
-  power = indata;
-
-  Serial.println(F("Enter the number of valve fittings:"));
-  get_integer_input();
-  num_valve_fittings = indata;
-
-  Serial.println(F("Indicate whether the valve is closed in the idle state (enter 1 for true and 0 for false):"));
-  get_integer_input();
-  if (indata == 0){
-    idle_state_is_closed = false;
-  }
-  else{
-    idle_state_is_closed = true;
-  }
-
-  Serial.println(F("Enter whether the valve returns to regular logic on power loss (enter 1 for true and 0 for false):"));
-  get_integer_input();
-  if (indata == 0){
-    return_to_state_logic_exists = false;
-  }
-  else{
-    return_to_state_logic_exists = true;
-  }
-
-  Serial.println(F("Enter the inrush current in Amps:"));
-  get_integer_input();
-  inrush_current_amps = indata;
-
-  Serial.println(F("Enter the holding current in Amps:"));
-  get_integer_input();
-  holding_current_amps = indata;
-
-  Serial.println(F("Enter the duty cycle type:"));
-  get_integer_input();
-  duty_cycle_type = indata;
-
-  Serial.println(F("Enter the duty cycle ratio:"));
-  get_integer_input();
-  duty_cycle_ratio = indata;
-
-  Serial.println(F("Enter whether there is three way wiring:(Enter 0 for no or 1 for yes)"));
-  if (indata == 0){
-    has_three_way_wiring = false;
-  }
-  else{
-    has_three_way_wiring = true;
-  }
-
-  Serial.println(F("Enter the minimum pressure in PSI:"));
-  get_integer_input();
-  min_pressure_psi = indata;
-
-  Serial.println(F("Enter the maximum pressure in PSI:"));
-  get_integer_input();
-  max_pressure_psi = indata;
-
-  Serial.println(F("Enter the resistance in Ohms:"));
-  get_integer_input();
-  resistance_ohms = indata;
-
-  create_new_valve()
-}
-
-void create_new_valve(string model, string link, int power, int num_valve_fittings, bool idle_state_is_closed, bool return_to_state_logic_exists, int inrush_current_amps, int holding_current_amps, int duty_cycle_type, int duty_cycle_ratio, bool wiring_three_way, int min_pressure_psi, int max_pressure_psi, int resistance_ohms){
-  eeprom_object.valves[eeprom_object.num_valves] = new valve(eeprom_object.current_valve_id, model, link, power, num_valve_fittings, idle_state_is_closed, return_to_state_logic_exists, inrush_current_amps, holding_current_amsp, duty_cycle_type, duty_cycle_ratio, wiring_three_way, min_pressure_psi, max_pressure_psi, resistance_ohms);
-  eeprom_objet.num_valves++;
-  eeprom_object.current_valve_id++;
-}
-
-void remove_valve(int index){
-  delete eeprom_object.valves[index];
-  for (int i = index; i < eeprom_object.num_valves - 1; i++){
-    eeprom_object.valves[i] = eeprom_object.valves[i+1];
-  }
-  eeprom_object.valves[eeprom_object.num_valves-1] = nullptr;
-  eeprom_object.num_valves--;
-}
-
-void remove_all_valves(){
-  while (eeprom_object.num_valves > 0){
-    remove_valve(eeprom_object.num_valves-1);
-  }
-  delete[] eeprom_object.valves;
-  //SD.remove("events.txt");
-}
-
-int evaluateValve(int id){
-  /*
-  if valve type is normally open:
-    hold valve high to close 
-  */
-}
-
-// bool check_overlap(event_window){
-//   // Loop through window vector and check if seconds_from_start_of_week of event_window is between start and end of something in the vector
-//   // events array is in eeprom object
-//   for (int i = 0; i < eeprom_object.num_events; i++){
-//     if (event_window.seconds_interval[0] < eeprom_object.events[i].seconds_interval[1] && event_window.seconds_interval[1] > eeprom_object.events[i].seconds_interval[0]){
-//       return true;
-//     }
-//   }
-//   return false;
-// }
-
 // void wakeup_routine(){
 //   check_for_events();
 
 // }
-
-// 
 
 
 
@@ -2075,6 +3567,8 @@ void timer_based_scheduler_menu(){
   }
 
   Serial.println(F("Timer-based Irrigation Event Scheduling Completed."));
+  print_all_events();
+
 }
 
 void permit_deny_event_scheduler_menu(){
@@ -2162,16 +3656,6 @@ void singular_event_scheduling_menu(int event_type){
   span[0] = new DateTime(years[0], months[0], days[0], hours[0], minutes[0], seconds[0]);
   span[1] = new DateTime(years[1], months[1], days[1], hours[1], minutes[1], seconds[1]);
 
-  // For debugging
-  // Serial.println(F("Start Date:"));
-  // Serial.println(span[0]->year());
-  // Serial.println(span[0]->month());
-  // Serial.println(span[0]->day());
-  // Serial.println(span[0]->hour());
-  // Serial.println(span[0]->minute());
-  // Serial.println(span[0]->second());
-
-
   Serial.println(F("How many irrigation zones should consider this new event?"));
   Serial.println();
   get_integer_input();
@@ -2186,19 +3670,23 @@ void singular_event_scheduling_menu(int event_type){
   // fixed size for now, but might want to change later
   int zones[500];
 
+  bool groups[4];
+  for (int i = 0; i < 4; i++){
+    groups[i] = false;
+  }
+
   for (int i = 0; i < numZones; i++) {
     Serial.print(F("Enter irrigation zone receiving this new singular event."));
     get_integer_input();
-    zones[i] = indata;
+    groups[indata-1] = true;
     //perhaps store an integer array in eeprom for each irrigation zone containing the index number of DateTime scheduling objects stored in a file?.
     //saved
   }
 
-  for (int i = 0; i < numZones; i++){
-    schedule_new_event(zones[i], false, event_type, span);
-  }
-
+  schedule_new_event(groups, false, event_type, span);
   Serial.println(F("Singular window addition(s) completed."));
+  //print_all_events();
+
 }
 
 void recurring_event_scheduler_menu(int event_type){
@@ -2250,26 +3738,55 @@ void recurring_event_scheduler_menu(int event_type){
 
   get_integer_input();
 
-  Serial.println(F("Define Start and Stop dates for the new recurring event."));
+  // May have to look into changing type from int to more specific type
+  int years[2];
+  int months[2];
+  int days[2];
+  int hours[2];
+  int minutes[2];
+  int seconds[2];
+
+  Serial.println(F("Define Start and Stop dates for the first iteration of the new recurring event."));
+  Serial.println(F("The event will repeat weekly on a window matching the day of the week, hour, minute, and second of the initial event window."));
+  //Serial.println(F("For example, say it is 8/16/24 and you want to schedule a recurring event."))
   Serial.println();
+
+
   for (int i = 0; i < 2; i++) {
     if (i == 0) {
       Serial.println(F("Select Start date."));
     } else {
       Serial.println(F("Select End date."));
     }
-    Serial.println(F("Enter Year.")); //saved
+
+    Serial.println(F("Enter Year."));
     get_integer_input();
-    //newEvent.eventStartStop[i].year() = indata;
+    years[i] = indata;
 
     Serial.println(F("Enter Month."));
     get_integer_input();
-    //newEvent.eventStartStop[i].month() = indata;
+    months[i] = indata;
 
     Serial.println(F("Enter Day of Month."));
     get_integer_input();
-    //newEvent.eventStartStop[i].day() = indata;
+    days[i] = indata;
+    
+    Serial.println(F("Enter Hour of Day, considering a 24 hour clock (0 to 23). "));
+    get_integer_input();
+    hours[i] = indata;
+
+    Serial.println(F("Enter Minute of Hour (0 to 59)."));
+    get_integer_input();
+    minutes[i] = indata;
+
+    Serial.println(F("Enter Second of Minute (0 to 59)."));
+    get_integer_input();
+    seconds[i] = indata; //saved
   }
+
+  DateTime* span[2];
+  span[0] = new DateTime(years[0], months[0], days[0], hours[0], minutes[0], seconds[0]);
+  span[1] = new DateTime(years[1], months[1], days[1], hours[1], minutes[1], seconds[1]);
 
   Serial.println(F("How many irrigation zones should receive this new recurring event?"));
   Serial.println();
@@ -2283,11 +3800,19 @@ void recurring_event_scheduler_menu(int event_type){
     //menu();
   }
 
+   bool groups[4];
+  for (int i = 0; i < 4; i++){
+    groups[i] = false;
+  }
+
   for (int i = 0; i < numZones; i++) {
     Serial.println(F("Enter irrigation zone receiving this new recurring event."));
     get_integer_input();
     //perhaps store an integer array in eeprom for each irrigation zone containing the index number of DateTime scheduling objects stored in a file?.
+    groups[indata-1] = true;
   }
+
+  schedule_new_event(groups, true, event_type, span);
 
   //For later Evaluation....
   //calculate the number of seconds elapsed since the beginning of the week
@@ -2296,18 +3821,26 @@ void recurring_event_scheduler_menu(int event_type){
 }
 
 // Functions for managing events
-void schedule_new_event(int group, bool recurring, int event_type, DateTime* span[2]){
-  event new_event(group, recurring, event_type, span);
-  events[eeprom_object.num_events] = &new_event;
+void schedule_new_event(bool groups[4], bool recurring, uint8_t event_type, DateTime* span[2]){
+  //event new_event(eeprom_object.current_event_reference_number, groups, recurring, event_type, span);
+  events[eeprom_object.num_events] = new event(eeprom_object.current_event_reference_number, groups, recurring, event_type, span);
   eeprom_object.num_events++;
+  eeprom_object.current_event_reference_number++;
+
+  // for (int i = 0; i < 4; i++){
+  //   if (groups[i]){
+  //     eeprom_object.eventReference.schedule[eeprom_object.eventReference.] = 
+  //   }
+  // }
+  
   Serial.println(eeprom_object.num_events);
   //global_num_events;
-  print_all_events();
+  //print_all_events();
 }
 
 void remove_event(int index){
   delete events[index];
-  for (int i = index; i < eeprom_object.num_events; i++){
+  for (int i = index; i < eeprom_object.num_events - 1; i++){
     events[i] = events[i+1];
   }
   events[eeprom_object.num_events-1] = nullptr;
@@ -2318,9 +3851,17 @@ void remove_all_events(){
   while (eeprom_object.num_events > 0){
     remove_event(eeprom_object.num_events-1);
   }
+  delete[] events;
   SD.remove("events.txt");
 }
+ 
+ // saved
+// Clear JSON buffer
+// Put counter in loop to populate array, print size
+// Clear other buffers
 
+// Look into whether writing new file or not
+// Can compare 2 buffers or boolean to see if change
 void read_events_data(){
   Serial.println(F("Reading in events data from file."));
   StaticJsonDocument<10000> eventsLog;
@@ -2340,7 +3881,10 @@ void read_events_data(){
   int i = 0;
   for (JsonObject o: eventsLog["eventsArray"].as<JsonArray>()){
     events[i] = new event();
-    events[i]->group = o["group"];
+    for (int j = 0; j < 4; j++){
+      events[i]->groups[j] = o["groups"][j];
+    }
+    //events[i]->group = o["group"];
     events[i]->recurring = o["recurring"];
     events[i]->event_type = o["event_type"];
     uint32_t start = o["start_span_seconds"];
@@ -2360,13 +3904,41 @@ void read_events_data(){
   // }
 }
 
-void write_events_data(){
+void fill_old_events_data(){
   StaticJsonDocument<10000> eventsLog;
+  // jsonBuffer.clear() or eventsLog.clear()
   JsonArray eventsArray = eventsLog.createNestedArray("eventsArray");
   for (int i = 0; i < eeprom_object.num_events; i++){
-    events[i]->print();
+    //events[i]->print();
     JsonObject event = eventsArray.createNestedObject();
-    event["group"] = events[i]->group;
+    JsonArray groups = event.createNestedArray("groups");
+    //event["groups"] = events[i]->groups;
+    for (int j = 0; j < 4; j++){
+      groups.add(events[i]->groups[j]);
+    }
+    event["recurring"] = events[i]->recurring;
+    event["event_type"] = events[i]->event_type;
+    event["start_span_seconds"] = events[i]->span[0]->unixtime();
+    event["end_span_seconds"] = events[i]->span[1]->unixtime();
+  }
+
+  Serial.print(F("Saving new Event as Json..."));
+  // Serial.println();
+  serializeJson(eventsLog, temp_json_data);  //copy the info in the buffer to the array to use writeFile below
+}
+
+void write_events_data(){
+  StaticJsonDocument<10000> eventsLog;
+  // jsonBuffer.clear() or eventsLog.clear()
+  JsonArray eventsArray = eventsLog.createNestedArray("eventsArray");
+  for (int i = 0; i < eeprom_object.num_events; i++){
+    //events[i]->print();
+    JsonObject event = eventsArray.createNestedObject();
+    JsonArray groups = event.createNestedArray("groups");
+    //event["groups"] = events[i]->groups;
+    for (int j = 0; j < 4; j++){
+      groups.add(events[i]->groups[j]);
+    }
     event["recurring"] = events[i]->recurring;
     event["event_type"] = events[i]->event_type;
     event["start_span_seconds"] = events[i]->span[0]->unixtime();
@@ -2376,19 +3948,26 @@ void write_events_data(){
   Serial.print(F("Saving new Event as Json..."));
   // Serial.println();
   serializeJson(eventsLog, json_array);  //copy the info in the buffer to the array to use writeFile below
+  ser
   //serializeJson(eventsLog, Serial);
   // //Serial.println(s);
   //writeFileSD("events.txt", json_array);  //filename limit of 13 chars
   
-  SD.remove("events.txt");
-  writeFileSD("events.txt", json_array);
+  // Might have to cast to a string
+  if (!temp_json_data.equals(json_array)){
+    SD.remove("events.txt");
+    writeFileSD("events.txt", json_array);
+  }
+  
   //eventsArray.printTo(Serial);
   //serializeJsonPretty(eventsLog, Serial);
-  myfile = SD.open("events.txt", FILE_READ);
-  while (myfile.available()) {  // read file and print to Serial COM port, Note this will be slow with alot of data due to chip limitations. A desktop with a chip reader is nearly instantaneous.
-    Serial.write(myfile.read());
-  }
-  myfile.close();
+
+  // Prints the file contents, useful for debugging
+  // myfile = SD.open("events.txt", FILE_READ);
+  // while (myfile.available()) {  // read file and print to Serial COM port, Note this will be slow with alot of data due to chip limitations. A desktop with a chip reader is nearly instantaneous.
+  //   Serial.write(myfile.read());
+  // }
+  // myfile.close();
 }
 
 void print_all_events(){
@@ -2403,89 +3982,75 @@ void print_all_events(){
 
 void print_events_by_group(int group){
   for (int i = 0; i < eeprom_object.num_events; i++){
-    if (events[i]->group == group){
+    if (events[i]->groups[i]){
       events[i]->print();
     }
   }
 }
 
-// If an upcoming event is found, return the integer index within the events array, otherwise return -1
-void check_for_singular_events(){
+int min_time_to_next_event(){
   // Get the current time
   DateTime now = rtc.now();                           //needed to get unix time in next line
-  // uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
-  Timespan t(8);
+  uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
+  // Serial.println(current_unix_epoch_time);
+
+  uint32_t num_seconds_in_week = 604800;
+  uint32_t shift = 259200;
+  uint32_t num_seconds_since_week_start = (current_unix_epoch_time - shift) % num_seconds_in_week;
+  //Serial.println(num_seconds_since_week_start);
+
   for (int i = 0; i < eeprom_object.num_events; i++){
-    if (now + 8 < events[i]->span[1] && now + 8 > events[i]->span[0]){
+    if (events[i]->recurring){
+      uint32_t beginnging_seconds_since_week_start = ( events[i]->span[0]->unixtime() - shift) % num_seconds_in_week;
+      uint32_t ending_seconds_since_week_start = ( events[i]->span[1]->unixtime() - shift) % num_seconds_in_week;
+      if (num_seconds_since_week_start >= beginnging_seconds_since_week_start &&  num_seconds_since_week_start <= ending_seconds_since_week_start){
+        Serial.print("Recurring event indicated for the following group(s): ");
+        for (int j = 0; j < 4; j++){
+          if (events[i]->groups[j]){
+            Serial.print(j+1);
+            Serial.print(" ");
+          }
+        }
+      }
+    }
+    // The event is singular
+    else{
 
     }
   }
-  
-  // Serial.println(current_unix_epoch_time);
-
-  // uint32_t num_seconds_in_week = 604800;
-  // uint32_t shift = 259200;
-  // uint32_t num_seconds_since_week_start = (current_unix_epoch_time - shift) % num_seconds_in_week;
-  // Serial.println(num_seconds_since_week_start);
-
-  // // Loop through the irrigation windows for each group
-  // for (int i = 0; i < 4; i++){
-  //   for (int j = 0; j < eeprom_object.num_irrigation_events[i]; j++){
-  //   if (num_seconds_since_week_start + 8  >= eeprom_object.irrigation_events[i][j].seconds_interval[0] && num_seconds_since_week_start <= eeprom_object.irrigation_events[i][j].seconds_interval[1]){
-  //     // Proceed with irrigation
-  //     Serial.print(F("Irrigation indicated for group"));
-  //     Serial.println(i);
-  //     // call test_nonblocking_irrigation or it's equivalent in the node code
-  //   }
-  //   }
-  //}
-  
-  // See if the current time + 8 lies within a window, since windows are disjoin, it can only be in at most one
-  // Windows should be disjoint, it doesn't make sense to have two overlapping windows for the same group, only one thing at once - either irrigating or not
 }
 
-void check_for_recurring_events(){
-  // Get the current time
-  DateTime now = rtc.now();                           //needed to get unix time in next line
-  // uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
-  // Serial.println(current_unix_epoch_time);
-
-  // uint32_t num_seconds_in_week = 604800;
-  // uint32_t shift = 259200;
-  // uint32_t num_seconds_since_week_start = (current_unix_epoch_time - shift) % num_seconds_in_week;
-  // Serial.println(num_seconds_since_week_start);
-
-  // // Loop through the irrigation windows for each group
-  // for (int i = 0; i < 4; i++){
-  //   for (int j = 0; j < eeprom_object.num_irrigation_events[i]; j++){
-  //   if (num_seconds_since_week_start + 8  >= eeprom_object.irrigation_events[i][j].seconds_interval[0] && num_seconds_since_week_start <= eeprom_object.irrigation_events[i][j].seconds_interval[1]){
-  //     // Proceed with irrigation
-  //     Serial.print(F("Irrigation indicated for group"));
-  //     Serial.println(i);
-  //     // call test_nonblocking_irrigation or it's equivalent in the node code
-  //   }
-  //   }
-  //}
-  
-  // See if the current time + 8 lies within a window, since windows are disjoin, it can only be in at most one
-  // Windows should be disjoint, it doesn't make sense to have two overlapping windows for the same group, only one thing at once - either irrigating or not
-}
-
-bool check_for_measurement_events(){
+void check_for_sensor_based_irrigation(){
   //Get the current hours, minute, seconds
   //Loop through the elements of the match array and see if anything matches
   Serial.println(F("Checking for upcoming measurement events."));
   DateTime* times[8];
-  DateTime currentTime = rtc.now();
+  DateTime current_time = rtc.now();
   for (int i = 0; i < 8; i++){
-    times[i] = new DateTime(currentTime.unixtime() + i);
+    times[i] = new DateTime(current_time.unixtime() + i);
     //Serial.println(times[i]->timestamp());
   }
 
   for (int i = 0; i < 8; i++){
     if (check_match_fields(*times[i])){
       // The next measurement occurs in i < 8 seconds, wait that long and then begin measurement
-      delay(i*1000);
+
+      // Schedule a singular event starting in i seconds, calculate the span and add it to the event queue
+
+      // Change schedule_new_event to return an integer: the event ID, store it in events_queue
+      // trigger global boolean to read sensors
+
+
+
+
+
+
+      
+      //delay(i*1000);
+
+      // Create a event i seconds from now and 
+
+      perform_sensor_based_irrigation();
       //test_nonblocking_irrigation();
       if (check_match_fields(*times[i])){
         Serial.print(F("Match found in "));
@@ -2567,12 +4132,102 @@ void print_match_fields_by_unit_of_time(int unit_of_time){
   Serial.println("");
 }
 
+int check_for_recurring_events(){
+  // Get the current time
+  DateTime now = rtc.now();                           //needed to get unix time in next line
+  uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
+
+  uint32_t num_seconds_in_week = 604800;
+  uint32_t shift = 259200;
+  uint32_t num_seconds_since_week_start = (current_unix_epoch_time - shift) % num_seconds_in_week;
+
+
+  for (int i = 0; i < eeprom_object.num_events; i++){
+    if (events[i]->recurring){
+      uint32_t beginnging_seconds_since_week_start = ( events[i]->span[0]->unixtime() - shift) % num_seconds_in_week;
+      uint32_t ending_seconds_since_week_start = ( events[i]->span[1]->unixtime() - shift) % num_seconds_in_week;
+      if (num_seconds_since_week_start >= beginnging_seconds_since_week_start &&  num_seconds_since_week_start <= ending_seconds_since_week_start){
+        Serial.print("Recurring event indicated for the following group(s): ");
+        for (int j = 0; j < 4; j++){
+          if (events[i]->groups[j]){
+            Serial.print(j+1);
+            Serial.print(" ");
+          }
+        }
+      }
+    }
+  }
+  // // Loop through the irrigation windows for each group
+  // for (int i = 0; i < 4; i++){
+  //   for (int j = 0; j < eeprom_object.num_irrigation_events[i]; j++){
+  //   if (num_seconds_since_week_start + 8  >= eeprom_object.irrigation_events[i][j].seconds_interval[0] && num_seconds_since_week_start <= eeprom_object.irrigation_events[i][j].seconds_interval[1]){
+  //     // Proceed with irrigation
+  //     Serial.print(F("Irrigation indicated for group"));
+  //     Serial.println(i);
+  //     // call test_nonblocking_irrigation or it's equivalent in the node code
+  //   }
+  //   }
+  //}
+  
+  // See if the current time + 8 lies within a window, since windows are disjoin, it can only be in at most one
+  // Windows should be disjoint, it doesn't make sense to have two overlapping windows for the same group, only one thing at once - either irrigating or not
+}
+
+// If an upcoming event is found, return the integer index within the events array, otherwise return -1
+int check_for_singular_events(){
+  // Get the current time
+  DateTime now = rtc.now();                           //needed to get unix time in next line
+  // uint32_t current_unix_epoch_time = now.unixtime();  //get current unix epoch time
+  // Apparently putting 5 in here will result in 8 seconds being added?
+  TimeSpan t(5);
+  Serial.print((now + t).timestamp());
+  for (int i = 0; i < eeprom_object.num_events; i++){
+    //Serial.print(events[i]->span[0].timestamp());
+    if (now + t >= *(events[i]->span[0]) && now + t <= *(events[i]->span[1])){
+      // event is found, just print for now, but eventually  proceed to nonblocking irrigation
+      Serial.print("Upcoming singular event indicated for the following group(s): ");
+      for (int j = 0; j < 4; j++){
+        if (events[i]->groups[j]){
+          Serial.print(j+1);
+          Serial.print(" ");
+        }
+      }
+    }
+  }
+  
+  // Serial.println(current_unix_epoch_time);
+
+  // uint32_t num_seconds_in_week = 604800;
+  // uint32_t shift = 259200;
+  // uint32_t num_seconds_since_week_start = (current_unix_epoch_time - shift) % num_seconds_in_week;
+  // Serial.println(num_seconds_since_week_start);
+
+  // // Loop through the irrigation windows for each group
+  // for (int i = 0; i < 4; i++){
+  //   for (int j = 0; j < eeprom_object.num_irrigation_events[i]; j++){
+  //   if (num_seconds_since_week_start + 8  >= eeprom_object.irrigation_events[i][j].seconds_interval[0] && num_seconds_since_week_start <= eeprom_object.irrigation_events[i][j].seconds_interval[1]){
+  //     // Proceed with irrigation
+  //     Serial.print(F("Irrigation indicated for group"));
+  //     Serial.println(i);
+  //     // call test_nonblocking_irrigation or it's equivalent in the node code
+  //   }
+  //   }
+  //}
+  
+  // See if the current time + 8 lies within a window, since windows are disjoin, it can only be in at most one
+  // Windows should be disjoint, it doesn't make sense to have two overlapping windows for the same group, only one thing at once - either irrigating or not
+}
+
 void clear_sd(){
   SD.remove("events.txt");
 }
 
+/*
+End of event code
+*/
+
 // Given a pointer to a scheduled irrigation event, this function performs nonblocking irrigation for the specified groups
-void perform_scheduled_irrigation(event* e){
+void perform_scheduled_irrigation(struct event* e){
   Datetime now = rtc.now();
   if (e->state == IDLE){
     for (int i = 0; i < 4; i++){
@@ -2696,6 +4351,31 @@ void irrigate(){
   Serial.println(F("Irrigation done"));
 }
 
+// Planned Change: event has start, stop, e.g. threshold: 30, then evaluation criteria,
+
+// Integers to identify each criteria, parameter passed into this function
+
+// Read sensors, evaluate readings based on our criteria, then write an event tailored to the criteria
+
+// Removing actual irrigation from this function and shift to an evaluation function
+// bool 
+
+// shell function
+void evaluate_irr_criteria_1(int WM_group_num, int WM_group_mean, int WM_group_water_threshold, uint32_t last_irr_time_for_group){
+  bool irrigate = false;
+
+
+  // evaluate criteria
+
+  if (irrigate){
+    // create new event
+    // probably singular
+    // calculate and define the event span
+  }
+}
+
+// Prototype sketch for latching valve module 12/17/24
+
 //New prompt for the 4 threshold groups of sensors.
 uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_water_threshold, uint32_t last_irr_time_for_group, bool test_mode) {
   if (WM_group_num >= 1 && WM_group_num <= 4){
@@ -2748,7 +4428,7 @@ uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_
 
               for (int i = 0; i <= numChars; i++) {
                 if (local_time_irr_update[i] != '\0') {
-                  irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
+                  global_last_irr_ending_time += local_time_irr_update[i];  //The global variable keeping track of last irr event
                 } else {
                   break;
                 }
@@ -2787,6 +4467,18 @@ uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_
           // 2022/03/22 Note that this will need changed in future if separate timing differences are specified for each group-----
           Serial.println(F("The minimum time since last irrigation event has been exceeded. Proceed with irrigation"));
           delay(50);
+
+          local_time(eeprom_object.last_irr_unix_time[0]);
+          delay(10);
+
+          for (int i = 0; i <= numChars; i++) {
+            if (local_time_irr_update[i] != '\0') {
+              global_last_irr_starting_time += local_time_irr_update[i];  //The global variable keeping track of last irr event
+            } else {
+              break;
+            }
+          }
+
           if (test_mode){
             Serial.println(F("CURRENTLY IN TEST MODE: pipe would have opened now."));
             delay(50);
@@ -2942,4 +4634,3 @@ void somethingWorkingPlease(){
                 // Do the something that is being scheduled
                   //sub-function to do that something...
 }
- 

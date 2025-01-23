@@ -1365,7 +1365,7 @@ void write_events_data(){
     JsonArray groups = event.createNestedArray("groups");
     //event["groups"] = events[i]->groups;
     for (int j = 0; j < 4; j++){
-      groups.add(events[i]->groups[j]);
+      groups.add(events[i]->groups[j]); // saved 1/11/25
     }
     event["recurring"] = events[i]->recurring;
     event["event_type"] = events[i]->event_type;
