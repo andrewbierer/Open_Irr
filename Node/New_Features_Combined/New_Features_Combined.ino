@@ -317,11 +317,13 @@ struct eeprom_struct {
   // The queue would store the IDs of events
   int events_queue[50];
   int events_queue_size = 0;
+  uint16_t current_event_reference_number = 0;
 
   //valve valves[10];
   int current_valve_id = 0;
   int num_valves = 0;
   int valve_group_id_lookup[4];
+
 
 };
 
@@ -422,11 +424,10 @@ ISR(PCINT0_vect) {
 
 // Initially timeEvaluationConsideration
 struct event{
-  event_state state;
-  unsigned long event_millis;
-  int event_id;
-  //bool groups[4]; // Makes sense to be here since if we have an array in eeprom, it's more difficult to update indices when removing
-  int group;
+  int event_reference_number;
+  // The irrigation groups that the event is scheduled for
+  bool groups[4]; // Makes sense to be here since if we have an array in eeprom, it's more difficult to update indices when removing
+  //int group;
   // Could use pointers or references instead
   bool recurring;              //false = singular
   // bool permit;                 //false = deny
@@ -436,16 +437,25 @@ struct event{
 
   DateTime* span[2];  //DateTime classes for start and end dates/times for a particular event
 
-  event(int group, bool recurring, uint8_t event_type, DateTime* span[2]): group(group), recurring(recurring), event_type(event_type){
+  event(uint16_t event_reference_number, bool groups[4], bool recurring, uint8_t event_type, DateTime* span[2]): event_reference_number(event_reference_number), recurring(recurring), event_type(event_type){
+    for (int i = 0; i < 4; i++){
+      this->groups[i] = groups[i];
+    }
     this->span[0] = span[0];
     this->span[1] = span[1]; 
   }
 
-  event(): group(-1), recurring(false), event_type(-1){}
+  event(): recurring(false), event_type(-1){}
 
   void print(){
-    Serial.print(F("Group: "));
-    Serial.println(group);
+    Serial.print(F("Group(s): "));
+    for (int i = 0; i < 4; i++){
+      if (groups[i]){
+        Serial.print(i+1);
+        Serial.print(" ");
+      }
+    }
+    Serial.println("");
     Serial.print(F("Recurring: "));
     if (recurring){
       Serial.println("Y");
@@ -486,7 +496,7 @@ struct event{
     Serial.print(F("Month: "));
     Serial.println(span[1]->month());
     Serial.print(F("Day: "));
-    Serial.println(span[1]->year());
+    Serial.println(span[1]->day());
     Serial.print(F("Hour: "));
     Serial.println(span[1]->hour());
     Serial.print(F("Minute: "));
@@ -863,11 +873,20 @@ void setup() {
 
   set_radio();
   check_rtc();
-  
-  read_events_data();
-  
-  Serial.println("Initialization Completed"); //saved
 
+  // SD.remove("events.txt");
+  // writeFileSD("events.txt", "Hello World");
+  //test_read_and_write_events_data();
+  events_menu();
+  write_events_data();
+  read_events_data();
+  updateEEPROM();
+
+  
+  Serial.println("Initialization Completed");
+  // while (1){
+
+  // }
   
   setRTCInterrupt();
   set_alarms(8);
@@ -878,7 +897,8 @@ void setup() {
   // The realtime clock might have some memory
   //updateEEPROM();
 
-  menu();
+  
+  //menu();
   // events menu in open_irr, continue on valve_menu and this file
 }
 
@@ -892,6 +912,9 @@ void loop() {
   read_events_data();
 
   // Comarator to see if JSON has changed (possibly to cut down read/writes)
+  // reading is free on chip but writing has a cost
+  // read and write only if events have changed
+  // Remove events that have been done and see if new events are there and write them
   fill_old_events_data();
 
   // Now we have the events array filled with predefined events
@@ -1858,274 +1881,276 @@ void read_watermark() {
 
 int WM_group_means(uint8_t WM_group_num[], int datasize, uint8_t water_threshold_group) {
 
-  force_irr = false;  //reset force_irr
-  int set_water_threshold;
+  // Work In Progress: Commented out to allow for compilation
+  // force_irr = false;  //reset force_irr
+  // int set_water_threshold;
 
-  if (water_threshold_group == 1) {
-    set_water_threshold = eeprom_object.group_irr_thresholds[0];
-  } else if (water_threshold_group == 2) {
-    set_water_threshold = eeprom_object.group_irr_thresholds[1];
-  } else if (water_threshold_group == 3) {
-    set_water_threshold = eeprom_object.group_irr_thresholds[2];
-  } else if (water_threshold_group == 4) {
-    set_water_threshold = eeprom_object.group_irr_thresholds[3];
-  } else {
-    Serial.println(F("Water threshold undefined, define it in the menu."));
-  }
-
-
-  char WM_array[WM_string.length() + 1];              //arrays are zero-indexed (start at position 0)
-  WM_string.toCharArray(WM_array, sizeof(WM_array));  //convert the WM_string to a character array
-
-  char *pointer_array[sizeof(WM_array)];  //create an empty character (pointer_array) the size of the character array
-  char *pointer = NULL;                   //declare an empty pointer variable
-  byte index = 0;                         //Declare an index to increment starting at 0 since arrays are 0 indexed
-
-  pointer = strtok(WM_array, ",");  //Looking withing WM_array, a comma is a delimiter for separation, declare what pointer points to
-  Serial.print(F("pointer:  "));
-  Serial.println(pointer);
-  while (pointer != NULL) {
-    pointer_array[index] = pointer;  //within pointer_array declare the pointer (0-inf) and the value pointed to (pointer)
-    index++;
-    pointer = strtok(NULL, ",");  //end the while loop
-  }
-
-  int sum = 0;  //declare holders for sum, count
-  int count = 0;
-  int error_code_count = 0;
-  //uint8_t raw_group_mean = 0;
-  float raw_group_mean = 0.00;
-  int buff_sum = 0;
-  int buff_count = 0;
-  int count_outliers = 0;  //Start at 0
-  int expected_sensor_count = 0;
-
-  if (water_threshold_group == 1) {
-    Serial.print(F("eeprom_object.WM_group1:  "));
-    for (int r = 0; r < 16; r++) {
-      if (eeprom_object.WM_group1[r] != 255 && eeprom_object.WM_group1[r] != -1) {
-        Serial.print(eeprom_object.WM_group1[r]);
-      }
-      if (eeprom_object.WM_group1[r] >= 0) {
-        expected_sensor_count++;
-      }
-    }
-    Serial.println();
-  } else if (water_threshold_group == 2) {
-    Serial.print(F("eeprom_object.WM_group2:  "));
-    for (int r = 0; r < 16; r++) {
-      if (eeprom_object.WM_group2[r] != 255 && eeprom_object.WM_group2[r] != -1) {
-        Serial.print(eeprom_object.WM_group2[r]);
-      }
-      if (eeprom_object.WM_group2[r] >= 0) {
-        expected_sensor_count++;
-      }
-    }
-    Serial.println();
-  } else if (water_threshold_group == 3) {
-    Serial.print(F("eeprom_object.WM_group3:  "));
-    for (int r = 0; r < 16; r++) {
-      if (eeprom_object.WM_group3[r] != 255 && eeprom_object.WM_group3[r] != -1) {
-        Serial.print(eeprom_object.WM_group3[r]);
-      }
-      if (eeprom_object.WM_group3[r] >= 0) {
-        expected_sensor_count++;
-      }
-    }
-    Serial.println();
-
-  } else if (water_threshold_group == 4) {
-    Serial.print(F("eeprom_object.WM_group4:  "));
-    for (int r = 0; r < 16; r++) {
-      if (eeprom_object.WM_group4[r] != 255 && eeprom_object.WM_group4[r] != -1) {
-        Serial.print(eeprom_object.WM_group4[r]);
-      }
-      if (eeprom_object.WM_group4[r] >= 0) {
-        expected_sensor_count++;
-      }
-    }
-    Serial.println();
-  } else {
-    Serial.println(F("Water threshold undefined, define it in the menu."));
-  }
+  // if (water_threshold_group == 1) {
+  //   set_water_threshold = eeprom_object.group_irr_thresholds[0];
+  // } else if (water_threshold_group == 2) {
+  //   set_water_threshold = eeprom_object.group_irr_thresholds[1];
+  // } else if (water_threshold_group == 3) {
+  //   set_water_threshold = eeprom_object.group_irr_thresholds[2];
+  // } else if (water_threshold_group == 4) {
+  //   set_water_threshold = eeprom_object.group_irr_thresholds[3];
+  // } else {
+  //   Serial.println(F("Water threshold undefined, define it in the menu."));
+  // }
 
 
+  // char WM_array[WM_string.length() + 1];              //arrays are zero-indexed (start at position 0)
+  // WM_string.toCharArray(WM_array, sizeof(WM_array));  //convert the WM_string to a character array
 
-  for (int i = 0; i < datasize; i++) {                               //for the declared channel group,
-    int q = WM_group_num[i];                                         //q mirrors each element of channel group up to the globally specified datasize
-    if (q != ',' && q != ' ' && q != '-' && q != "-1" && q <= 16) {  //if q is not a comma or a space, -1, or some random number above 16...
-      //  q = (q * 2) + 1; //q is the location of the data of the desired channel, because channel of mux and arrays begin at 0, the value of channel 0 will be on element 1 of the array. formula is x*2+1                                                                                 //This is of course different if resistance values are included in the string.
-      if (eeprom_object.include_resistance == true) {
-        q = (q * 3) + 2;  //if we are including resistances in the wm_string, the formula is x*3+2
-      } else {
-        q = (q * 2) + 1;
-      }
-      int wm_val;
-      wm_val = atoi(pointer_array[q]);
-      //for troubleshooting
-      Serial.print(F("wm_val: "));  //for troubleshooting
-      Serial.println(wm_val);
+  // char *pointer_array[sizeof(WM_array)];  //create an empty character (pointer_array) the size of the character array
+  // char *pointer = NULL;                   //declare an empty pointer variable
+  // byte index = 0;                         //Declare an index to increment starting at 0 since arrays are 0 indexed
 
-      if (wm_val != 255 && wm_val != 240 && wm_val != 0 && wm_val < 0) {  //If not throwing a fault code calculate an initial mean
-        sum += abs(wm_val);
-        count++;
-      } else {
-        if (wm_val == 255 || wm_val == 240 || wm_val > 0) {  // 255=open circuit, 240=short circuit
-          error_code_count++;
-        }
-      }
-      if (WM_group_num[i] != -1 && WM_group_num[i] <= 16) {
-        if (wm_val == 255 || wm_val == 240 || wm_val == 0) {
-          Serial.print(F("Node: "));           //If a fault code was one of the data requested in the group
-          Serial.print(eeprom_object.nodeID);  //Serial.print the nodeID, channel (algorithim is (x-1) / 2), and value of the fault
-          Serial.print(F("  Fault code on channel:  "));
-          Serial.print(WM_group_num[i]);
-          Serial.print(F("  with value: "));
-          Serial.print(wm_val);
-          Serial.println(F(".  Value not included in Group mean."));
-        }
-      }
-    }
-  }
+  // pointer = strtok(WM_array, ",");  //Looking withing WM_array, a comma is a delimiter for separation, declare what pointer points to
+  // Serial.print(F("pointer:  "));
+  // Serial.println(pointer);
+  // while (pointer != NULL) {
+  //   pointer_array[index] = pointer;  //within pointer_array declare the pointer (0-inf) and the value pointed to (pointer)
+  //   index++;
+  //   pointer = strtok(NULL, ",");  //end the while loop
+  // }
 
-  //For troubleshooting
-  if (eeprom_object.run_notes) {
-    Serial.print(F("Sum:  "));
-    Serial.println(sum);
-    Serial.print(F("Count:  "));
-    Serial.println(count);
-    Serial.print(F("Expected Sensor Count:  "));
-    Serial.println(expected_sensor_count);
-    Serial.print(F("Error Code Count: "));
-    Serial.println(error_code_count);
-  }
+  // int sum = 0;  //declare holders for sum, count
+  // int count = 0;
+  // int error_code_count = 0;
+  // //uint8_t raw_group_mean = 0;
+  // float raw_group_mean = 0.00;
+  // int buff_sum = 0;
+  // int buff_count = 0;
+  // int count_outliers = 0;  //Start at 0
+  // int expected_sensor_count = 0;
 
-  if (count == 0.00) {  // none of the wm_val are counted...
-    raw_group_mean = 0.00;
-  } else {
-    raw_group_mean = (sum / count) * -1;  //calculate the raw_mean of the of the desired channels, negative 1 here as kpa is in tension
-  }
-  Serial.print(F("Raw group mean: "));
-  Serial.println(raw_group_mean);
+  // if (water_threshold_group == 1) {
+  //   Serial.print(F("eeprom_object.WM_group1:  "));
+  //   for (int r = 0; r < 16; r++) {
+  //     if (eeprom_object.WM_group1[r] != 255 && eeprom_object.WM_group1[r] != -1) {
+  //       Serial.print(eeprom_object.WM_group1[r]);
+  //     }
+  //     if (eeprom_object.WM_group1[r] >= 0) {
+  //       expected_sensor_count++;
+  //     }
+  //   }
+  //   Serial.println();
+  // } else if (water_threshold_group == 2) {
+  //   Serial.print(F("eeprom_object.WM_group2:  "));
+  //   for (int r = 0; r < 16; r++) {
+  //     if (eeprom_object.WM_group2[r] != 255 && eeprom_object.WM_group2[r] != -1) {
+  //       Serial.print(eeprom_object.WM_group2[r]);
+  //     }
+  //     if (eeprom_object.WM_group2[r] >= 0) {
+  //       expected_sensor_count++;
+  //     }
+  //   }
+  //   Serial.println();
+  // } else if (water_threshold_group == 3) {
+  //   Serial.print(F("eeprom_object.WM_group3:  "));
+  //   for (int r = 0; r < 16; r++) {
+  //     if (eeprom_object.WM_group3[r] != 255 && eeprom_object.WM_group3[r] != -1) {
+  //       Serial.print(eeprom_object.WM_group3[r]);
+  //     }
+  //     if (eeprom_object.WM_group3[r] >= 0) {
+  //       expected_sensor_count++;
+  //     }
+  //   }
+  //   Serial.println();
+
+  // } else if (water_threshold_group == 4) {
+  //   Serial.print(F("eeprom_object.WM_group4:  "));
+  //   for (int r = 0; r < 16; r++) {
+  //     if (eeprom_object.WM_group4[r] != 255 && eeprom_object.WM_group4[r] != -1) {
+  //       Serial.print(eeprom_object.WM_group4[r]);
+  //     }
+  //     if (eeprom_object.WM_group4[r] >= 0) {
+  //       expected_sensor_count++;
+  //     }
+  //   }
+  //   Serial.println();
+  // } else {
+  //   Serial.println(F("Water threshold undefined, define it in the menu."));
+  // }
 
 
-  //Run through calculation again, if percent difference of each sensor is < 20% from the raw_group_mean (all sensors as long as not fault code) include in the calculation of the buffered_mean that gets output & triggers irr events.
-  // 04/25/2022 Note that pdiff calc is working but that small differences in kpa result in large percent differences due to log scale...
-  // Need to consider a secondary flag. for example a "grace window" -> if the pdiff is > 20, check grace window. -> grace window = 10 (could be changed) -> if this sensors kpa is +10 or -10 from the raw_group_mean OR the set water threshold, include in calc of buffered mean, else exclude from buffered mean.
 
-  for (int i = 0; i < datasize; i++) {                               //for the declared channel group,
-    int q = WM_group_num[i];                                         //q mirrors each element of channel group up to the globally specified datasize
-    if (q != ',' && q != ' ' && q != '-' && q != "-1" && q <= 16) {  //if q is not a comma or a space, -1, or some random number above 16...
-      if (eeprom_object.include_resistance == true) {                //q is the location of the data of the desired channel, because channel of mux and arrays begin at 0, the value of channel 0 will be on element 1 of the array. formula is x*2+1
-        q = (q * 3) + 2;                                             //if we are including resistances in the wm_string, the formula is x*3+2
-      } else {
-        q = (q * 2) + 1;
-      }
-      int wm_val;
-      wm_val = atoi(pointer_array[q]);
+  // for (int i = 0; i < datasize; i++) {                               //for the declared channel group,
+  //   int q = WM_group_num[i];                                         //q mirrors each element of channel group up to the globally specified datasize
+  //   if (q != ',' && q != ' ' && q != '-' && q != "-1" && q <= 16) {  //if q is not a comma or a space, -1, or some random number above 16...
+  //     //  q = (q * 2) + 1; //q is the location of the data of the desired channel, because channel of mux and arrays begin at 0, the value of channel 0 will be on element 1 of the array. formula is x*2+1                                                                                 //This is of course different if resistance values are included in the string.
+  //     if (eeprom_object.include_resistance == true) {
+  //       q = (q * 3) + 2;  //if we are including resistances in the wm_string, the formula is x*3+2
+  //     } else {
+  //       q = (q * 2) + 1;
+  //     }
+  //     int wm_val;
+  //     wm_val = atoi(pointer_array[q]);
+  //     //for troubleshooting
+  //     Serial.print(F("wm_val: "));  //for troubleshooting
+  //     Serial.println(wm_val);
 
-      ////// Another Question needs addressed. What if the mean is such that each individual sensor is >= 20% different from the raw_mean? ->> It needs to trigger the irrigation event anyway.
-      if (wm_val != 255 && wm_val != 256 && wm_val != 240 && wm_val != 0 && WM_group_num[i] != -1) {
-        if (abs((abs(raw_group_mean - wm_val) / ((raw_group_mean + wm_val) / 2.0)) * 100) < 20.0) {  //if the sensor reading is less than 20% different from the raw_group_mean, include in calc of buffered_group_mean
-          Serial.print(F("Channel: "));
-          Serial.print(WM_group_num[i]);
-          Serial.print(F("  value:  "));
-          Serial.print(wm_val);
-          Serial.print(F(", Pdiff from raw mean = "));
-          Serial.println(abs(((abs(raw_group_mean - wm_val)) / ((raw_group_mean + wm_val) / 2.0)) * 100));
-          buff_sum += abs(wm_val);
-          buff_count++;
+  //     if (wm_val != 255 && wm_val != 240 && wm_val != 0 && wm_val < 0) {  //If not throwing a fault code calculate an initial mean
+  //       sum += abs(wm_val);
+  //       count++;
+  //     } else {
+  //       if (wm_val == 255 || wm_val == 240 || wm_val > 0) {  // 255=open circuit, 240=short circuit
+  //         error_code_count++;
+  //       }
+  //     }
+  //     if (WM_group_num[i] != -1 && WM_group_num[i] <= 16) {
+  //       if (wm_val == 255 || wm_val == 240 || wm_val == 0) {
+  //         Serial.print(F("Node: "));           //If a fault code was one of the data requested in the group
+  //         Serial.print(eeprom_object.nodeID);  //Serial.print the nodeID, channel (algorithim is (x-1) / 2), and value of the fault
+  //         Serial.print(F("  Fault code on channel:  "));
+  //         Serial.print(WM_group_num[i]);
+  //         Serial.print(F("  with value: "));
+  //         Serial.print(wm_val);
+  //         Serial.println(F(".  Value not included in Group mean."));
+  //       }
+  //     }
+  //   }
+  // }
 
-        } else if ((wm_val < set_water_threshold - wm_grace_window || wm_val > set_water_threshold + wm_grace_window) && (wm_val < raw_group_mean - wm_grace_window || wm_val > raw_group_mean + wm_grace_window)) {  //check grace window against raw group mean and the user defined water threshold, wm_grace_window defined globally.
-          Serial.print(F("Channel: "));
-          Serial.print(WM_group_num[i]);
-          Serial.print(F("  value:  "));
-          Serial.print(wm_val);
-          Serial.print(F(", Pdiff from raw mean = "));
-          Serial.print(abs(((abs(raw_group_mean - wm_val)) / ((raw_group_mean + wm_val) / 2.0)) * 100));
-          Serial.print(F("  detected as an outlier, (>20 pdiff & more than +- 10kpa from raw_group_mean AND the threshold set point)"));
-          Serial.println(F("  This channel is not counted in buffered group mean."));
+  // //For troubleshooting
+  // if (eeprom_object.run_notes) {
+  //   Serial.print(F("Sum:  "));
+  //   Serial.println(sum);
+  //   Serial.print(F("Count:  "));
+  //   Serial.println(count);
+  //   Serial.print(F("Expected Sensor Count:  "));
+  //   Serial.println(expected_sensor_count);
+  //   Serial.print(F("Error Code Count: "));
+  //   Serial.println(error_code_count);
+  // }
 
-          Serial.print(F("Acceptable range based on raw group mean: "));
-          Serial.print(raw_group_mean - wm_grace_window);
-          Serial.print(F(" to "));
-          Serial.print(raw_group_mean + wm_grace_window);
-          Serial.println(F(" kPa"));
+  // if (count == 0.00) {  // none of the wm_val are counted...
+  //   raw_group_mean = 0.00;
+  // } else {
+  //   raw_group_mean = (sum / count) * -1;  //calculate the raw_mean of the of the desired channels, negative 1 here as kpa is in tension
+  // }
+  // Serial.print(F("Raw group mean: "));
+  // Serial.println(raw_group_mean);
 
-          Serial.print(F("Acceptable range based on threshold set point: "));
-          Serial.print(set_water_threshold - wm_grace_window);
-          Serial.print(F(" to "));
-          Serial.print(set_water_threshold + wm_grace_window);
-          Serial.println(F(" kPa"));
 
-          count_outliers++;  //increment outlier count.
-        } else {
-          Serial.print(F("Channel: "));
-          Serial.print(WM_group_num[i]);
-          Serial.print(F("  value:  "));
-          Serial.print(wm_val);
-          Serial.print(F("  detected as a POSSIBLE outlier, (>20 pdiff from raw_group_mean,"));
-          Serial.print(F(" Pdiff from raw mean = "));
-          Serial.print(abs(((abs(raw_group_mean - wm_val)) / ((raw_group_mean + wm_val) / 2.0)) * 100));
-          Serial.println(F(")"));
-          buff_sum += abs(wm_val);  //include in buffered_mean calc anyway if + - 10 from raw mean or set water threshold
-          buff_count++;
-        }
-      }
-    }
-  }
-  Serial.print(F("Total Outliers: "));
-  Serial.println(count_outliers);
+  // //Run through calculation again, if percent difference of each sensor is < 20% from the raw_group_mean (all sensors as long as not fault code) include in the calculation of the buffered_mean that gets output & triggers irr events.
+  // // 04/25/2022 Note that pdiff calc is working but that small differences in kpa result in large percent differences due to log scale...
+  // // Need to consider a secondary flag. for example a "grace window" -> if the pdiff is > 20, check grace window. -> grace window = 10 (could be changed) -> if this sensors kpa is +10 or -10 from the raw_group_mean OR the set water threshold, include in calc of buffered mean, else exclude from buffered mean.
 
-  Serial.print(F("Sensors Considered (count): "));
-  Serial.println(buff_count);
+  // for (int i = 0; i < datasize; i++) {                               //for the declared channel group,
+  //   int q = WM_group_num[i];                                         //q mirrors each element of channel group up to the globally specified datasize
+  //   if (q != ',' && q != ' ' && q != '-' && q != "-1" && q <= 16) {  //if q is not a comma or a space, -1, or some random number above 16...
+  //     if (eeprom_object.include_resistance == true) {                //q is the location of the data of the desired channel, because channel of mux and arrays begin at 0, the value of channel 0 will be on element 1 of the array. formula is x*2+1
+  //       q = (q * 3) + 2;                                             //if we are including resistances in the wm_string, the formula is x*3+2
+  //     } else {
+  //       q = (q * 2) + 1;
+  //     }
+  //     int wm_val;
+  //     wm_val = atoi(pointer_array[q]);
 
-  if (error_code_count > (0.25 * expected_sensor_count) && expected_sensor_count > 2) {  // if there are 3 or more sensors expected and the error code count is greater than or equal to 1/4 of the expected sensor count.....force the event
-    Serial.println(F("More than 1/4 the expected sensors of the group are throwing an error code."));
-    Serial.println(F("Forcing an irrigation event."));
-    force_irr = true;
-    eeprom_object.error_log.irr_struct.forced_group[water_threshold_group - 1] = true;      //-1 as 0 indexed
-    eeprom_object.error_log.irr_struct.forced_group_code[water_threshold_group - 1] = 101;  // "e" for error
-  }
+  //     ////// Another Question needs addressed. What if the mean is such that each individual sensor is >= 20% different from the raw_mean? ->> It needs to trigger the irrigation event anyway.
+  //     if (wm_val != 255 && wm_val != 256 && wm_val != 240 && wm_val != 0 && WM_group_num[i] != -1) {
+  //       if (abs((abs(raw_group_mean - wm_val) / ((raw_group_mean + wm_val) / 2.0)) * 100) < 20.0) {  //if the sensor reading is less than 20% different from the raw_group_mean, include in calc of buffered_group_mean
+  //         Serial.print(F("Channel: "));
+  //         Serial.print(WM_group_num[i]);
+  //         Serial.print(F("  value:  "));
+  //         Serial.print(wm_val);
+  //         Serial.print(F(", Pdiff from raw mean = "));
+  //         Serial.println(abs(((abs(raw_group_mean - wm_val)) / ((raw_group_mean + wm_val) / 2.0)) * 100));
+  //         buff_sum += abs(wm_val);
+  //         buff_count++;
 
-  if ((count_outliers >= buff_count) && count > 3) {                                        //force irrigation event if half or more of the buff_count are outliers if there are 3 or more sensors connected.
-    eeprom_object.error_log.irr_struct.forced_group[water_threshold_group - 1] = true;      //-1 as 0 indexed
-    eeprom_object.error_log.irr_struct.forced_group_code[water_threshold_group - 1] = 111;  // "o" for outlier
+  //       } else if ((wm_val < set_water_threshold - wm_grace_window || wm_val > set_water_threshold + wm_grace_window) && (wm_val < raw_group_mean - wm_grace_window || wm_val > raw_group_mean + wm_grace_window)) {  //check grace window against raw group mean and the user defined water threshold, wm_grace_window defined globally.
+  //         Serial.print(F("Channel: "));
+  //         Serial.print(WM_group_num[i]);
+  //         Serial.print(F("  value:  "));
+  //         Serial.print(wm_val);
+  //         Serial.print(F(", Pdiff from raw mean = "));
+  //         Serial.print(abs(((abs(raw_group_mean - wm_val)) / ((raw_group_mean + wm_val) / 2.0)) * 100));
+  //         Serial.print(F("  detected as an outlier, (>20 pdiff & more than +- 10kpa from raw_group_mean AND the threshold set point)"));
+  //         Serial.println(F("  This channel is not counted in buffered group mean."));
 
-    Serial.println(F("Number of outliers >= one-half of non-error sensors AND the number of non-error sensors is > 3. Check and see whether to force irrigation event or encountering error."));
-    Serial.print(F("Raw group mean is equal to: "));
-    Serial.println(raw_group_mean);
-    if ((raw_group_mean <= 0 && raw_group_mean >= -239) && (raw_group_mean < set_water_threshold)) {
-      Serial.print(F("The raw group mean is reasonable and is lower than the set water threshold for the group."));
-      Serial.println(F("  Proceed with forced irrigation event, note this result is possible with poor connection of ALL WM sensors in the group."));
-      force_irr = true;
-    } else {
-      Serial.println(F("The raw group mean is not within the measurement range of WM sensors OR is higher than the set water threshold for the group."));
-      Serial.println(F("Force irrigation event prevented."));
-      eeprom_object.error_log.irr_struct.forced_group_code[water_threshold_group - 1] = 104;  // "h" for higher than set threshold
-    }
-  }
+  //         Serial.print(F("Acceptable range based on raw group mean: "));
+  //         Serial.print(raw_group_mean - wm_grace_window);
+  //         Serial.print(F(" to "));
+  //         Serial.print(raw_group_mean + wm_grace_window);
+  //         Serial.println(F(" kPa"));
 
-  Serial.print(F("buff_sum:  "));
-  Serial.println(buff_sum);
-  Serial.print(F("buff_count:  "));
-  Serial.println(buff_count);
-  //uint8_t buffered_group_mean = 0;
-  float buffered_group_mean;
-  if (buff_count == 0) {
-    buffered_group_mean = 0.00;
-  } else {
-    buffered_group_mean = (buff_sum / buff_count) * -1;  //calculate the mean of the of the desired channels, negative 1 here as kpa is in tension
-  }
-  Serial.print(F("Buffered Group mean: "));
-  Serial.println(buffered_group_mean);
+  //         Serial.print(F("Acceptable range based on threshold set point: "));
+  //         Serial.print(set_water_threshold - wm_grace_window);
+  //         Serial.print(F(" to "));
+  //         Serial.print(set_water_threshold + wm_grace_window);
+  //         Serial.println(F(" kPa"));
 
-  if (force_irr) {
-    Serial.println("Force irrigation event detected.");  //Give indication you are forcing the irrigation event
-    buffered_group_mean = -999;
-  }
+  //         count_outliers++;  //increment outlier count.
+  //       } else {
+  //         Serial.print(F("Channel: "));
+  //         Serial.print(WM_group_num[i]);
+  //         Serial.print(F("  value:  "));
+  //         Serial.print(wm_val);
+  //         Serial.print(F("  detected as a POSSIBLE outlier, (>20 pdiff from raw_group_mean,"));
+  //         Serial.print(F(" Pdiff from raw mean = "));
+  //         Serial.print(abs(((abs(raw_group_mean - wm_val)) / ((raw_group_mean + wm_val) / 2.0)) * 100));
+  //         Serial.println(F(")"));
+  //         buff_sum += abs(wm_val);  //include in buffered_mean calc anyway if + - 10 from raw mean or set water threshold
+  //         buff_count++;
+  //       }
+  //     }
+  //   }
+  // }
+  // Serial.print(F("Total Outliers: "));
+  // Serial.println(count_outliers);
 
-  return buffered_group_mean;  //return the requested group_mean
+  // Serial.print(F("Sensors Considered (count): "));
+  // Serial.println(buff_count);
+
+  // if (error_code_count > (0.25 * expected_sensor_count) && expected_sensor_count > 2) {  // if there are 3 or more sensors expected and the error code count is greater than or equal to 1/4 of the expected sensor count.....force the event
+  //   Serial.println(F("More than 1/4 the expected sensors of the group are throwing an error code."));
+  //   Serial.println(F("Forcing an irrigation event."));
+  //   force_irr = true;
+  //   eeprom_object.error_log.irr_struct.forced_group[water_threshold_group - 1] = true;      //-1 as 0 indexed
+  //   eeprom_object.error_log.irr_struct.forced_group_code[water_threshold_group - 1] = 101;  // "e" for error
+  // }
+
+  // if ((count_outliers >= buff_count) && count > 3) {                                        //force irrigation event if half or more of the buff_count are outliers if there are 3 or more sensors connected.
+  //   eeprom_object.error_log.irr_struct.forced_group[water_threshold_group - 1] = true;      //-1 as 0 indexed
+  //   eeprom_object.error_log.irr_struct.forced_group_code[water_threshold_group - 1] = 111;  // "o" for outlier
+
+  //   Serial.println(F("Number of outliers >= one-half of non-error sensors AND the number of non-error sensors is > 3. Check and see whether to force irrigation event or encountering error."));
+  //   Serial.print(F("Raw group mean is equal to: "));
+  //   Serial.println(raw_group_mean);
+  //   if ((raw_group_mean <= 0 && raw_group_mean >= -239) && (raw_group_mean < set_water_threshold)) {
+  //     Serial.print(F("The raw group mean is reasonable and is lower than the set water threshold for the group."));
+  //     Serial.println(F("  Proceed with forced irrigation event, note this result is possible with poor connection of ALL WM sensors in the group."));
+  //     force_irr = true;
+  //   } else {
+  //     Serial.println(F("The raw group mean is not within the measurement range of WM sensors OR is higher than the set water threshold for the group."));
+  //     Serial.println(F("Force irrigation event prevented."));
+  //     eeprom_object.error_log.irr_struct.forced_group_code[water_threshold_group - 1] = 104;  // "h" for higher than set threshold
+  //   }
+  // }
+
+  // Serial.print(F("buff_sum:  "));
+  // Serial.println(buff_sum);
+  // Serial.print(F("buff_count:  "));
+  // Serial.println(buff_count);
+  // //uint8_t buffered_group_mean = 0;
+  // float buffered_group_mean;
+  // if (buff_count == 0) {
+  //   buffered_group_mean = 0.00;
+  // } else {
+  //   buffered_group_mean = (buff_sum / buff_count) * -1;  //calculate the mean of the of the desired channels, negative 1 here as kpa is in tension
+  // }
+  // Serial.print(F("Buffered Group mean: "));
+  // Serial.println(buffered_group_mean);
+
+  // if (force_irr) {
+  //   Serial.println("Force irrigation event detected.");  //Give indication you are forcing the irrigation event
+  //   buffered_group_mean = -999;
+  // }
+
+  // return buffered_group_mean;  //return the requested group_mean
+  return 1;
 }
 
 //-----Compile Data-------------------------------------------------
@@ -2144,7 +2169,8 @@ void compile() {
   header += '~';
   header += '~';
 
-  header += eeprom_object.IDnum;
+  // Planned Change: IDnum has been removed from the EEPROM
+  // header += eeprom_object.IDnum;
   header += ',';
 
   if (battV <= lowBatt) {
@@ -2513,21 +2539,22 @@ void menu() {
     Serial.read();  //clear serial input buffer
   }
 
-  itoa(eeprom_object.IDnum, a, 10);  //convert IDnum to character array
+  // Planned Change: IDnum has been removed from EEPROM
+  // itoa(eeprom_object.IDnum, a, 10);  //convert IDnum to character array
 
-  if (eeprom_object.IDnum < 10) {  // for naming filename
-    filename[0] = '0';             // put into filename[] array
-    filename[1] = '0';
-    filename[2] = a[0];
-  } else if (eeprom_object.IDnum < 100) {
-    filename[0] = '0';  // put into filename[] array
-    filename[1] = a[0];
-    filename[2] = a[1];
-  } else {
-    filename[0] = a[0];  // put into filename[] array
-    filename[1] = a[1];
-    filename[2] = a[2];
-  }
+  // if (eeprom_object.IDnum < 10) {  // for naming filename
+  //   filename[0] = '0';             // put into filename[] array
+  //   filename[1] = '0';
+  //   filename[2] = a[0];
+  // } else if (eeprom_object.IDnum < 100) {
+  //   filename[0] = '0';  // put into filename[] array
+  //   filename[1] = a[0];
+  //   filename[2] = a[1];
+  // } else {
+  //   filename[0] = a[0];  // put into filename[] array
+  //   filename[1] = a[1];
+  //   filename[2] = a[2];
+  // }
 
   print_board_info();
   print_menu_options();
@@ -2584,7 +2611,8 @@ void menu() {
 
       set_project_id();
 
-      set_board_id();
+      //
+      // set_board_id();
 
       set_node_id();
 
@@ -2707,142 +2735,146 @@ void menu() {
       break;
 
     case 110:  //"n" for sepecifying number of WM sensors & grouping | 11/18/2021 untested, not sure if will work
+      // Work in Progress: Commented out to allow for compilation
       {
-        get_integer_input();  //otherwise the first input is always 0?
-        Serial.println(F("Specify number of WaterMark sensors and averaging instructions."));
-        Serial.println(F("If you would like to continue, type 1. Press any other key to return to main menu."));
-        get_integer_input();
-        if (indata != 1) {
-          delay(1000);
-          Serial.println(F("Returning to main menu."));
-          menu();
-          break;
-        } else {
-          Serial.println(F("Clearing Existing Grouping Data."));
-          for (int z = 0; z < 16; z++) {
-            eeprom_object.WM_group1[z] = -1;
-            eeprom_object.WM_group2[z] = -1;
-            eeprom_object.WM_group3[z] = -1;
-            eeprom_object.WM_group4[z] = -1;
-          }
-        }
-        delay(1000);
-        Serial.println(F("Proceed with WaterMark sensor specification."));
-        Serial.println(F("Number of WaterMark sensors. Must be installed in sequential order 1-16"));
-        Serial.print(F("Current value:  "));
-        Serial.println(eeprom_object.num_WM);
-        get_integer_input();
-        eeprom_object.num_WM = indata;
+        // get_integer_input();  //otherwise the first input is always 0?
+        // Serial.println(F("Specify number of WaterMark sensors and averaging instructions."));
+        // Serial.println(F("If you would like to continue, type 1. Press any other key to return to main menu."));
+        // get_integer_input();
+        // if (indata != 1) {
+        //   delay(1000);
+        //   Serial.println(F("Returning to main menu."));
+        //   menu();
+        //   break;
+        // } else {
+        //   Serial.println(F("Clearing Existing Grouping Data."));
+        //   for (int z = 0; z < 16; z++) {
+        //     // FIXME: Update to use new 2D array version 
+        //     // eeprom_object.WM_group1[z] = -1;
+        //     // eeprom_object.WM_group2[z] = -1;
+        //     // eeprom_object.WM_group3[z] = -1;
+        //     // eeprom_object.WM_group4[z] = -1;
+        //   }
+        // }
+        // delay(1000);
+        // Serial.println(F("Proceed with WaterMark sensor specification."));
+        // Serial.println(F("Number of WaterMark sensors. Must be installed in sequential order 1-16"));
+        // Serial.print(F("Current value:  "));
+        // Serial.println(eeprom_object.num_WM);
+        // get_integer_input();
+        // eeprom_object.num_WM = indata;
 
-        Serial.println(F("Determine averaging instructions for the WaterMark sensors."));
-        Serial.println(F("Four groups of watermark sensors can be defined based on their channel position of the Multiplexor."));
-        Serial.println(F("Specify 0 for no averaging routine."));
-        Serial.println(F("Note that the water management routine toggles relays based on group averages."));
+        // Serial.println(F("Determine averaging instructions for the WaterMark sensors."));
+        // Serial.println(F("Four groups of watermark sensors can be defined based on their channel position of the Multiplexor."));
+        // Serial.println(F("Specify 0 for no averaging routine."));
+        // Serial.println(F("Note that the water management routine toggles relays based on group averages."));
 
-        Serial.print(F("Number of channels to average, Group1: "));  //This works great! repeat for each group 1-4
-        get_integer_input();
-        int num_sensors = indata;
-        Serial.print(F("Number sensors: "));
-        Serial.println(num_sensors);
-        int num_sensors_group1 = num_sensors;
-        eeprom_object.n_channels_wm_group1 = num_sensors;
+        // Serial.print(F("Number of channels to average, Group1: "));  //This works great! repeat for each group 1-4
+        // get_integer_input();
+        // int num_sensors = indata;
+        // Serial.print(F("Number sensors: "));
+        // Serial.println(num_sensors);
+        // int num_sensors_group1 = num_sensors;
+        // // Work in Progress: Commented out to allow for compilation
+        // // eeprom_object.n_channels_wm_group1 = num_sensors;
 
-        //Attempt a less memory intensive method------
-        for (int i = 0; i < num_sensors; i++) {
-          if (num_sensors == 0) {
-            break;  //If 0 sensors are selected, break out of for loop
-          }
-          int sensor_num = i + 1;
-          Serial.print(F("Specify sensor number "));
-          Serial.print(sensor_num);
-          Serial.println(F("  in group1: "));
-          get_integer_input();
-          eeprom_object.WM_group1[i] = indata;
-        }
+        // //Attempt a less memory intensive method------
+        // for (int i = 0; i < num_sensors; i++) {
+        //   if (num_sensors == 0) {
+        //     break;  //If 0 sensors are selected, break out of for loop
+        //   }
+        //   int sensor_num = i + 1;
+        //   Serial.print(F("Specify sensor number "));
+        //   Serial.print(sensor_num);
+        //   Serial.println(F("  in group1: "));
+        //   get_integer_input();
+        //   // Work in Progress: Commented out to allow for compilation
+        //   eeprom_object.WM_group1[i] = indata;
+        // }
 
-        Serial.print(F("Number of channels to average, Group2: "));
-        get_integer_input();
-        num_sensors = indata;
-        Serial.print(F("Number sensors: "));
-        Serial.println(num_sensors);
-        int num_sensors_group2 = num_sensors;
-        eeprom_object.n_channels_wm_group2 = num_sensors;
-        for (int i = 0; i < num_sensors; i++) {
-          if (num_sensors == 0) {
-            break;
-          }
-          int sensor_num = i + 1;
-          Serial.print(F("Specify sensor number "));
-          Serial.print(sensor_num);
-          Serial.println(F("  in group2: "));
-          get_integer_input();
-          eeprom_object.WM_group2[i] = indata;
-        }
+        // Serial.print(F("Number of channels to average, Group2: "));
+        // get_integer_input();
+        // num_sensors = indata;
+        // Serial.print(F("Number sensors: "));
+        // Serial.println(num_sensors);
+        // int num_sensors_group2 = num_sensors;
+        // eeprom_object.n_channels_wm_group2 = num_sensors;
+        // for (int i = 0; i < num_sensors; i++) {
+        //   if (num_sensors == 0) {
+        //     break;
+        //   }
+        //   int sensor_num = i + 1;
+        //   Serial.print(F("Specify sensor number "));
+        //   Serial.print(sensor_num);
+        //   Serial.println(F("  in group2: "));
+        //   get_integer_input();
+        //   eeprom_object.WM_group2[i] = indata;
+        // }
 
-        Serial.print(F("Number of channels to average, Group3: "));
-        get_integer_input();
-        num_sensors = indata;
-        Serial.print(F("Number sensors: "));
-        Serial.println(num_sensors);
-        int num_sensors_group3 = num_sensors;
-        eeprom_object.n_channels_wm_group3 = num_sensors;
-        for (int i = 0; i < num_sensors; i++) {
-          if (num_sensors == 0) {
-            break;
-          }
-          int sensor_num = i + 1;
-          Serial.print(F("Specify sensor number "));
-          Serial.print(sensor_num);
-          Serial.println(F("  in group3: "));
-          get_integer_input();
-          eeprom_object.WM_group3[i] = indata;
-        }
+        // Serial.print(F("Number of channels to average, Group3: "));
+        // get_integer_input();
+        // num_sensors = indata;
+        // Serial.print(F("Number sensors: "));
+        // Serial.println(num_sensors);
+        // int num_sensors_group3 = num_sensors;
+        // eeprom_object.n_channels_wm_group3 = num_sensors;
+        // for (int i = 0; i < num_sensors; i++) {
+        //   if (num_sensors == 0) {
+        //     break;
+        //   }
+        //   int sensor_num = i + 1;
+        //   Serial.print(F("Specify sensor number "));
+        //   Serial.print(sensor_num);
+        //   Serial.println(F("  in group3: "));
+        //   get_integer_input();
+        //   eeprom_object.WM_group3[i] = indata;
+        // }
 
-        Serial.print(F("Number of channels to average, Group4: "));
-        get_integer_input();
-        num_sensors = indata;
-        Serial.print(F("Number sensors: "));
-        Serial.println(num_sensors);
-        int num_sensors_group4 = num_sensors;
-        eeprom_object.n_channels_wm_group4 = num_sensors;
-        for (int i = 0; i < num_sensors; i++) {
-          if (num_sensors == 0) {
-            break;
-          }
-          int sensor_num = i + 1;
-          Serial.print(F("Specify sensor number "));
-          Serial.print(sensor_num);
-          Serial.println(F("  in group4: "));
-          get_integer_input();
-          eeprom_object.WM_group4[i] = indata;
-        }
+        // Serial.print(F("Number of channels to average, Group4: "));
+        // get_integer_input();
+        // num_sensors = indata;
+        // Serial.print(F("Number sensors: "));
+        // Serial.println(num_sensors);
+        // int num_sensors_group4 = num_sensors;
+        // eeprom_object.n_channels_wm_group4 = num_sensors;
+        // for (int i = 0; i < num_sensors; i++) {
+        //   if (num_sensors == 0) {
+        //     break;
+        //   }
+        //   int sensor_num = i + 1;
+        //   Serial.print(F("Specify sensor number "));
+        //   Serial.print(sensor_num);
+        //   Serial.println(F("  in group4: "));
+        //   get_integer_input();
+        //   eeprom_object.WM_group4[i] = indata;
+        // }
 
-        Serial.println(F("Current Grouping Settings."));
-        Serial.print(F("Group1: "));
-        for (int i = 0; i < num_sensors_group1; i++) {
-          Serial.print(eeprom_object.WM_group1[i]);
-          Serial.print(F("  "));
-        }
-        Serial.println();
-        Serial.print(F("Group2: "));
-        for (int i = 0; i < num_sensors_group2; i++) {
-          Serial.print(eeprom_object.WM_group2[i]);
-          Serial.print(F("  "));
-        }
-        Serial.println();
-        Serial.print(F("Group3: "));
-        for (int i = 0; i < num_sensors_group3; i++) {
-          Serial.print(eeprom_object.WM_group3[i]);
-          Serial.print(F("  "));
-        }
-        Serial.println();
-        Serial.print(F("Group4: "));
-        for (int i = 0; i < num_sensors_group4; i++) {
-          Serial.print(eeprom_object.WM_group4[i]);
-          Serial.print(F("  "));
-        }
-        menu();
-        break;
+        // Serial.println(F("Current Grouping Settings."));
+        // Serial.print(F("Group1: "));
+        // for (int i = 0; i < num_sensors_group1; i++) {
+        //   Serial.print(eeprom_object.WM_group1[i]);
+        //   Serial.print(F("  "));
+        // }
+        // Serial.println();
+        // Serial.print(F("Group2: "));
+        // for (int i = 0; i < num_sensors_group2; i++) {
+        //   Serial.print(eeprom_object.WM_group2[i]);
+        //   Serial.print(F("  "));
+        // }
+        // Serial.println();
+        // Serial.print(F("Group3: "));
+        // for (int i = 0; i < num_sensors_group3; i++) {
+        //   Serial.print(eeprom_object.WM_group3[i]);
+        //   Serial.print(F("  "));
+        // }
+        // Serial.println();
+        // Serial.print(F("Group4: "));
+        // for (int i = 0; i < num_sensors_group4; i++) {
+        //   Serial.print(eeprom_object.WM_group4[i]);
+        //   Serial.print(F("  "));
+        // }
+        // menu();
+        // break;
       }
     case 120:  //"x" for Exit ---------------------------------------------------
       Serial.println(F("Exit"));
@@ -2864,35 +2896,171 @@ void menu() {
   delay(100);
 }
 
-//-----Get User input as integer-----------------------------------------------
-void get_integer_input() {
-  menutimeout = millis() + 60000;  // time to wait for user to input something, was 10 secs
-  int sign = 1;                    // for handling negatives
-  indata = 0;                      // initialize
-  while (millis() < menutimeout)   // wait for user to input something
-  {
-    if (Serial.available() > 0)  // something came in to serial buffer
-    {
-      delay(100);                         // give time for everything to come in
-      numincoming = Serial.available();   // number of incoming bytes (1 byte = 1 HEX (ASCII) character or 8bits of binary)
-      for (i = 1; i <= numincoming; i++)  // read in everything
-      {
-        incoming[i] = Serial.read();                 // read from buffer
-        if (incoming[i] == 13 || incoming[i] == 10)  // ignore carriage return & line feed
-        {
-        } else if (incoming[i] == '-') {                      //if a minus is read in
-          sign = -1;                                          //update sign to neagative 1
-        } else if (incoming[i] >= '0' && incoming[i] <= '9')  // otherwise
-        {
-          input = incoming[i] - '0';            // convert ASCII value to ??numerical equivalent?? decimal.
-          indata = indata * 10 + input * sign;  // assemble to get total value if sequence of numbers
-        }
-      }
-      break;  // exit before menutimeout
-    }
+//-----Return sdCard information----------------------------------------- Nonfunctional
+
+void sdCheck() {
+  Sd2Card card;  // set up variables using the SD utility library functions
+  SdVolume volume;
+  SdFile root;
+  // print the type of card
+  Serial.println();
+  Serial.print(F("Card type:         "));
+  switch (card.type()) {
+    case SD_CARD_TYPE_SD1:
+      Serial.println(F("SD1"));
+      break;
+    case SD_CARD_TYPE_SD2:
+      Serial.println(F("SD2"));
+      break;
+    case SD_CARD_TYPE_SDHC:
+      Serial.println(F("SDHC"));
+      break;
+    default:
+      Serial.println(F("Unknown"));
   }
-  Serial.println(indata);  //return entered value for visual user feedback
-  delay(10);
+  // Now we will try to open the 'volume'/'partition' - it should be FAT16 or FAT32
+  if (!volume.init(card)) {
+    Serial.println(F("Could not find FAT16/FAT32 partition.\nMake sure you've formatted the card"));
+  }
+
+  Serial.print(F("Clusters:          "));
+  Serial.println(volume.clusterCount());
+  Serial.print(F("Blocks x Cluster:  "));
+  Serial.println(volume.blocksPerCluster());
+
+  Serial.print(F("Total Blocks:      "));
+  Serial.println(volume.blocksPerCluster() * volume.clusterCount());
+  Serial.println();
+  // print the type and size of the first FAT-type volume
+  uint32_t volumesize;
+  Serial.print(F("Volume type is:    FAT"));
+  Serial.println(volume.fatType(), DEC);
+
+  volumesize = volume.blocksPerCluster();  // clusters are collections of blocks
+  volumesize *= volume.clusterCount();     // we'll have a lot of clusters
+  volumesize /= 2;                         // SD card blocks are always 512 bytes (2 blocks are 1KB
+
+  Serial.print(F("Volume size (Kb):  "));
+  Serial.println(volumesize);
+  Serial.print(F("Volume size (Mb):  "));
+  volumesize /= 1024;
+  Serial.println(volumesize);
+  Serial.print(F("Volume size (Gb):  "));
+  Serial.println((float)volumesize / 1024.0);
+
+  Serial.println(F("\nFiles found on the card (name, date and size in bytes): "));
+  root.openRoot(volume);
+  // list all files in the card with date and size
+  root.ls(LS_R | LS_DATE | LS_SIZE);
+}
+
+//-----Test Measurements function-------------------------------------------------------------
+void test_measurements() {
+  readRTC();  //Read the RTC
+  delay(50);
+  Temp = getTemp();  //Read DS18B20 temperature sensors
+  delay(50);
+  read_watermark();  //Read the WaterMark Sensors
+  delay(50);
+  compile();  //Format data from subroutines into one string for transmission
+}
+
+void water_management_group_settings() {
+  Serial.println(F("Which water management group would you like to change settings for? (1 to 4)"));
+
+  get_integer_input();
+
+  int fn_group;
+  fn_group = indata;
+
+  if (fn_group != 1 && fn_group != 2 && fn_group != 3 && fn_group != 4) {
+    Serial.println(F("Invalid entry. Returning to main menu."));
+    menu();
+    return;
+  }
+
+  Serial.print(F("Defining water management settings for group #: "));
+  Serial.println(fn_group);
+
+  Serial.println(F("Current Settings: "));
+
+  Serial.print(F("Matric potential threshold for irrigation:  "));
+  Serial.println(eeprom_object.group_irr_thresholds[fn_group - 1]);  //-1 as 0 indexed
+  Serial.print(F("Minimum time between irrigation events (minutes): "));
+  Serial.println(eeprom_object.min_time_btwn_irr[fn_group - 1]);
+  Serial.print(F("Duration of an irrigation event (seconds): "));
+  Serial.println(eeprom_object.irr_period[fn_group - 1]);
+  Serial.println();
+  delay(1000);
+
+
+
+  //Need to add option to define in minutes or seconds... 3/21/2023
+
+  Serial.print(F("Please define the matric potential threshold (in kPa) which will trigger an irrigation event for group #: "));
+  Serial.println(fn_group);
+  get_integer_input();
+  int user_threshold;
+  user_threshold = indata;
+  Serial.println();
+
+  Serial.print(F("Please define the minimum time between irrigation events (in minutes) for group #: "));
+  Serial.println(fn_group);
+  get_integer_input();
+  int32_t min_btwn;
+  min_btwn = indata;
+  Serial.println();
+
+  delay(100);
+  Serial.print(F("Please define the duration of the irrigation events (in seconds) for group #: "));
+  Serial.println(fn_group);
+  get_integer_input();
+  int32_t sec_irr;
+  sec_irr = indata;
+  Serial.println();
+
+  /*
+
+  delay(100);
+  Serial.print(F("Please define prohibited windows for irrigation events in group #: "));
+  Serial.println(fn_group);
+  (please write me :^))
+
+  delay(100);
+  Serial.print(F("Please define permitted windows for irrigation events in group #: "));
+  Serial.println(fn_group);
+  (please write me :^))
+  */
+
+  eeprom_object.group_irr_thresholds[fn_group - 1] = user_threshold;  // -1 due to 0 indexing of arrays
+  eeprom_object.min_time_btwn_irr[fn_group - 1] = min_btwn;
+  eeprom_object.irr_period[fn_group - 1] = sec_irr;
+}
+
+void onAlarm() {
+  Serial.println("Alarm occured!");
+}
+
+//-----Set ALARM1 ---------------------------------
+void Set_ALARM_1_Interval() {
+  sei();
+  wdt_disable();                         // turn off watchdog timer From ArduinoSoilH2O
+  rtc.disable32K();                      // Turn off 32kHz output
+  pinMode(RTC_Interrupt, INPUT_PULLUP);  // Making it so, that the alarm will trigger an interrupt
+
+  //Schedule an alarm
+  attachInterrupt(digitalPinToInterrupt(RTC_Interrupt), onAlarm, FALLING);
+  rtc.clearAlarm(1);
+  rtc.clearAlarm(2);
+  rtc.writeSqwPinMode(DS3231_OFF);  //stop oscillating signals at sqw pin
+  rtc.disableAlarm(2);              //remove if using alarm2...
+  if (!rtc.setAlarm1(
+        rtc.now() + TimeSpan(0, 0, eeprom_object.ALARM_1_Interval, 0), DS3231_A1_Minute  // i.e. tells it to match minutes to value in timespan + now...
+        )) {
+    Serial.println(F("Error, alarm wasn't set!"));
+  } else {
+    Serial.println(F("Alarm is set!"));
+  }
 }
 
 // Menu setting for irrigation sensor/timer based
@@ -2914,7 +3082,7 @@ void events_loop(){
 
   // If 
 
-  check_match_fields();
+  //check_match_fields();
 
   // Function Name: 
   // First, check whether sensor based irrigation needs to be done based on the match fields
@@ -2922,10 +3090,10 @@ void events_loop(){
 
   // If not, check for other events and perform them
 
-  sensor_based_irrigation();
+  //sensor_based_irrigation();
 
 
-  check_for_measurement_events();
+  //check_for_measurement_events();
 
 
 
@@ -2953,10 +3121,12 @@ void events_loop(){
 
 
     // Prioritize scheduled irrigation events
+
+    // Check the type of event and if irrigation, move to new queue
     for (int i = 0; i < eeprom_object.events_queue_size; i++){
       // Create a new function that finds an event by id/reference number and returns the pointer and input into this
       // get_event_by_id 
-      handle_event(get_event_by_id(eeprom_object.events_queue[i]));
+      //handle_event(get_event_by_id(eeprom_object.events_queue[i]));
     }
     // subfunctions will update num_events and we will keep track of events to remove
     // eventsQueue will be updated after the loop
@@ -2999,6 +3169,8 @@ void events_loop(){
 
 }
 
+int events_queue_size = 50;
+
 // Populates eventsQueue with upcoming events
 void find_upcoming_events(){
   // Get the current time
@@ -3013,11 +3185,12 @@ void find_upcoming_events(){
 
       uint32_t beginning_seconds_since_week_start = ( events[i]->span[0]->unixtime() - shift) % num_seconds_in_week;
       uint32_t ending_seconds_since_week_start = ( events[i]->span[1]->unixtime() - shift) % num_seconds_in_week;
-      if (num_seconds_since_week_start >= beginnging_seconds_since_week_start &&  num_seconds_since_week_start <= ending_seconds_since_week_start){
+      if (num_seconds_since_week_start >= beginning_seconds_since_week_start &&  num_seconds_since_week_start <= ending_seconds_since_week_start){
         // add to events queue
         // might want to add something to current time to find events very shortly in the future to ensure they don't get skipped
         // so probably current_time + some_small_offset
-        eeprom_object.events_queue[events_queue_size] = *(events[i]->event_id);
+        // Work in Progress: Commented out to allow for compilation
+        //eeprom_object.events_queue[events_queue_size] = *(events[i]->event_id);
         eeprom_object.events_queue_size++;
       }
     }
@@ -3027,7 +3200,8 @@ void find_upcoming_events(){
       // Making sure that the time now is in the range of the span
       // With arrow notation, we can access data elements of an objects using it's pointer
       if (now >= *(events[i]->span[0]) && now <= *(events[i]->span[1])){
-        eeprom_object.events_queue[events_queue_size] = *(events[i]->event_id);
+        // Work in Progress: Commented out to allow for compilation
+        //eeprom_object.events_queue[events_queue_size] = *(events[i]->event_id);
         eeprom_object.events_queue_size++;
       }
     }
@@ -3041,13 +3215,14 @@ void reset_events_queue(){
   eeprom_object.events_queue_size = 0;
 }
 
-int get_index_of_event_by_id(int id){
-  for (int i = 0; i < eeprom_object.num_events; i++){
-    if (events[i]->event_id == id){
-      return i;
-    }
-  }
-}
+// Work in Progress: Commented to allow for compilation
+// int get_index_of_event_by_id(int id){
+//   for (int i = 0; i < eeprom_object.num_events; i++){
+//     if (events[i]->event_id == id){
+//       return i;
+//     }
+//   }
+// }
 
 // example client on microcontroller, while still connected, stuck in client loop, still process time or other events or no?
 // Consider 
@@ -3235,20 +3410,22 @@ void set_all_valve_integers(){
       int duty_cycle_ms = o["duty_cycle_ms"];
       int valve_id = o["valve_id"];
       if (idle_state_normally_closed){
-        if (latching){
-          eeprom_object.valve_procedure_integers[valve_id] = 1;
-        }
-        else{
-          eeprom_object.valve_procedure_integers[valve_id] = 1;
-        }
+        // Work in Progress: Commented out to allow for compilation
+        // if (latching){
+        //   eeprom_object.valve_procedure_integers[valve_id] = 1;
+        // }
+        // else{
+        //   eeprom_object.valve_procedure_integers[valve_id] = 1;
+        // }
       }
       else{
-        if (latching){
-          eeprom_object.valve_procedure_integers[valve_id] = 1;
-        }
-        else{
-          eeprom_object.valve_procedure_integers[valve_id] = 1;
-        }
+        // Work in Progress: Commented out to allow for compilation
+        // if (latching){
+        //   eeprom_object.valve_procedure_integers[valve_id] = 1;
+        // }
+        // else{
+        //   eeprom_object.valve_procedure_integers[valve_id] = 1;
+        // }
       }
   }
 }
@@ -3826,15 +4003,8 @@ void schedule_new_event(bool groups[4], bool recurring, uint8_t event_type, Date
   events[eeprom_object.num_events] = new event(eeprom_object.current_event_reference_number, groups, recurring, event_type, span);
   eeprom_object.num_events++;
   eeprom_object.current_event_reference_number++;
-
-  // for (int i = 0; i < 4; i++){
-  //   if (groups[i]){
-  //     eeprom_object.eventReference.schedule[eeprom_object.eventReference.] = 
-  //   }
-  // }
   
   Serial.println(eeprom_object.num_events);
-  //global_num_events;
   //print_all_events();
 }
 
@@ -3876,7 +4046,7 @@ void read_events_data(){
     Serial.println(error.f_str());
     return;
   }
-  //JsonArray eventsArray = eventsLog["eventsArray"].as<JsonArray>(); //saved
+  JsonArray eventsArray = eventsLog["eventsArray"].as<JsonArray>(); //saved
 
   int i = 0;
   for (JsonObject o: eventsLog["eventsArray"].as<JsonArray>()){
@@ -3913,9 +4083,10 @@ void fill_old_events_data(){
     JsonObject event = eventsArray.createNestedObject();
     JsonArray groups = event.createNestedArray("groups");
     //event["groups"] = events[i]->groups;
-    for (int j = 0; j < 4; j++){
-      groups.add(events[i]->groups[j]);
-    }
+    // Work in Progress: Commented out to allow for compilation
+    // for (int j = 0; j < 4; j++){
+    //   groups.add(events[i]->group[j]);
+    // }
     event["recurring"] = events[i]->recurring;
     event["event_type"] = events[i]->event_type;
     event["start_span_seconds"] = events[i]->span[0]->unixtime();
@@ -3928,14 +4099,16 @@ void fill_old_events_data(){
 }
 
 void write_events_data(){
+  SD.remove("events.txt");
+  delay(10);
   StaticJsonDocument<10000> eventsLog;
   // jsonBuffer.clear() or eventsLog.clear()
   JsonArray eventsArray = eventsLog.createNestedArray("eventsArray");
   for (int i = 0; i < eeprom_object.num_events; i++){
-    //events[i]->print();
+    events[i]->print();
     JsonObject event = eventsArray.createNestedObject();
     JsonArray groups = event.createNestedArray("groups");
-    //event["groups"] = events[i]->groups;
+    event["groups"] = events[i]->groups;
     for (int j = 0; j < 4; j++){
       groups.add(events[i]->groups[j]);
     }
@@ -3946,28 +4119,28 @@ void write_events_data(){
   }
   char json_array[10000];  // char array large enough
   Serial.print(F("Saving new Event as Json..."));
-  // Serial.println();
   serializeJson(eventsLog, json_array);  //copy the info in the buffer to the array to use writeFile below
-  ser
-  //serializeJson(eventsLog, Serial);
-  // //Serial.println(s);
-  //writeFileSD("events.txt", json_array);  //filename limit of 13 chars
+  serializeJson(eventsLog, Serial);
   
-  // Might have to cast to a string
-  if (!temp_json_data.equals(json_array)){
-    SD.remove("events.txt");
-    writeFileSD("events.txt", json_array);
-  }
   
+  //File f = SD.open("events.txt", FILE_WRITE);
+  //serializeJson(eventsLog, f);
+  writeFileSD("events.txt", json_array);  //filename limit of 13 chars
   //eventsArray.printTo(Serial);
   //serializeJsonPretty(eventsLog, Serial);
 
   // Prints the file contents, useful for debugging
-  // myfile = SD.open("events.txt", FILE_READ);
-  // while (myfile.available()) {  // read file and print to Serial COM port, Note this will be slow with alot of data due to chip limitations. A desktop with a chip reader is nearly instantaneous.
-  //   Serial.write(myfile.read());
-  // }
-  // myfile.close();
+  myfile = SD.open("events.txt", FILE_READ);
+  while (myfile.available()) {  // read file and print to Serial COM port, Note this will be slow with alot of data due to chip limitations. A desktop with a chip reader is nearly instantaneous.
+    Serial.write(myfile.read());
+  }
+  myfile.close();
+}
+
+void test_read_and_write_events_data(){
+
+  const char s[300] = "{\"eventsArray\":[{\"groups\":[1,0,0,0],\"recurring\":1,\"event_type\":1,\"start_span_seconds\":173815966,\"end_span_seconds\":1738025966},{\"groups\":[0,1,0,0],\"recurring\":1,\"event_type\":1,\"start_span_seconds\":173815966,\"end_span_seconds\":1738025966}]}\0";
+  writeFileSD("events.txt", s);
 }
 
 void print_all_events(){
@@ -4050,7 +4223,7 @@ void check_for_sensor_based_irrigation(){
 
       // Create a event i seconds from now and 
 
-      perform_sensor_based_irrigation();
+      //perform_sensor_based_irrigation();
       //test_nonblocking_irrigation();
       if (check_match_fields(*times[i])){
         Serial.print(F("Match found in "));
@@ -4227,94 +4400,94 @@ End of event code
 */
 
 // Given a pointer to a scheduled irrigation event, this function performs nonblocking irrigation for the specified groups
-void perform_scheduled_irrigation(struct event* e){
-  Datetime now = rtc.now();
-  if (e->state == IDLE){
-    for (int i = 0; i < 4; i++){
-      if (groups[i]){
-        open_valve(i);
-      }
-    }
+// void perform_scheduled_irrigation(struct event* e){
+//   Datetime now = rtc.now();
+//   if (e->state == IDLE){
+//     for (int i = 0; i < 4; i++){
+//       if (groups[i]){
+//         open_valve(i);
+//       }
+//     }
 
 
 
-    //e->event_millis = millis();
-    // global for each group
-    //opened_miliis = millius();
-    // have pin_states and change state 
-    // when the timer is up, set the pin low and return to default state for each of the valves
-    // helper function to pull default state of valve
-    // normally closed vs normally open: closed swithc connection made, singal going through,
-    // the valve is the barrier, different components control the valve such as sensros or switches
+//     //e->event_millis = millis();
+//     // global for each group
+//     //opened_miliis = millius();
+//     // have pin_states and change state 
+//     // when the timer is up, set the pin low and return to default state for each of the valves
+//     // helper function to pull default state of valve
+//     // normally closed vs normally open: closed swithc connection made, singal going through,
+//     // the valve is the barrier, different components control the valve such as sensros or switches
     
-    // close swithc is closing circuit, closing switch opens valves
-    // switch is normally open (the circuit is normally open) in this case
-    // if (groups[0]){
-    //   // say x is the pulse time
+//     // close swithc is closing circuit, closing switch opens valves
+//     // switch is normally open (the circuit is normally open) in this case
+//     // if (groups[0]){
+//     //   // say x is the pulse time
 
-    //   // On some solenoids, it permits irrigation and some it stops
-    //   digitalWrite(in1, HIGH);
-    //   // add some valve logic 
-    //   group_states[0] = IRRIGATING;
-    // }
-    // if (groups[1]){
-    //   digitalWrite(in1, HIGH);
-    //   group_states[1] = IRRIGATING;
-    // }
-    // if (groups[2]){
-    //   digitalWrite(in1, HIGH);
-    //   group_states[2] = IRRIGATING;
-    // }
-    // if (groups[3]){
-    //   digitalWrite(in1, HIGH);
-    //   group_states[3] = IRRIGATING;
-    // }
-  }
-  else if (e->state == IRRIGATING && now >= e->span[1]){
-    // The event is over
-    digitalWrite(in1, LOW);
-    digitalWrite(in2, LOW);
-    digitalWrite(in3, LOW);
-    digitalWrite(in4, LOW);
+//     //   // On some solenoids, it permits irrigation and some it stops
+//     //   digitalWrite(in1, HIGH);
+//     //   // add some valve logic 
+//     //   group_states[0] = IRRIGATING;
+//     // }
+//     // if (groups[1]){
+//     //   digitalWrite(in1, HIGH);
+//     //   group_states[1] = IRRIGATING;
+//     // }
+//     // if (groups[2]){
+//     //   digitalWrite(in1, HIGH);
+//     //   group_states[2] = IRRIGATING;
+//     // }
+//     // if (groups[3]){
+//     //   digitalWrite(in1, HIGH);
+//     //   group_states[3] = IRRIGATING;
+//     // }
+//   }
+//   else if (e->state == IRRIGATING && now >= e->span[1]){
+//     // The event is over
+//     digitalWrite(in1, LOW);
+//     digitalWrite(in2, LOW);
+//     digitalWrite(in3, LOW);
+//     digitalWrite(in4, LOW);
 
-    uint32_t current_unixtime = rtc.now().unixtime();  //reset the time of last irrigation event for that group
-    eeprom_object.last_irr_unix_time[WM_group_num - 1] = rtc.now().unixtime();  //reset the time of last irrigation event for that group
+//     uint32_t current_unixtime = rtc.now().unixtime();  //reset the time of last irrigation event for that group
+//     eeprom_object.last_irr_unix_time[WM_group_num - 1] = rtc.now().unixtime();  //reset the time of last irrigation event for that group
 
-    for (int i = 0; i < 4; i++){
-      if (groups[i]){
-        eeprom_object.last_irr_unix_time[i] = current_unxtime;
-        new_irr_event = true;  //set boolean true to update eeprom
+//     for (int i = 0; i < 4; i++){
+//       if (groups[i]){
+//         eeprom_object.last_irr_unix_time[i] = current_unxtime;
+//         new_irr_event = true;  //set boolean true to update eeprom
 
-        // Maybe change function name to print_local_time
-        local_time(eeprom_object.last_irr_unix_time[i]);
-        delay(10);
+//         // Maybe change function name to print_local_time
+//         local_time(eeprom_object.last_irr_unix_time[i]);
+//         delay(10);
 
-        // Don't know if still want to do this for scheduled events
-        // irrigation_prompt_string += 'G';
-        // irrigation_prompt_string += i;  //Amend relevant data to string for storage/transmission
-        // irrigation_prompt_string += ',';
+//         // Don't know if still want to do this for scheduled events
+//         // irrigation_prompt_string += 'G';
+//         // irrigation_prompt_string += i;  //Amend relevant data to string for storage/transmission
+//         // irrigation_prompt_string += ',';
 
 
-        // irrigation_prompt_string += WM_group_mean;
-        // irrigation_prompt_string += ',';
+//         // irrigation_prompt_string += WM_group_mean;
+//         // irrigation_prompt_string += ',';
 
-        // for (int i = 0; i <= numChars; i++) {
-        //   if (local_time_irr_update[i] != '\0') {
-        //     irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
-        //   } else {
-        //     break;
-        //   }
-        // }
-        // irrigation_prompt_string += ',';
-      }
-    }  
+//         // for (int i = 0; i <= numChars; i++) {
+//         //   if (local_time_irr_update[i] != '\0') {
+//         //     irrigation_prompt_string += local_time_irr_update[i];  //The global variable keeping track of last irr event
+//         //   } else {
+//         //     break;
+//         //   }
+//         // }
+//         // irrigation_prompt_string += ',';
+//       }
+//     }  
               
               
               
-  }
+//   }
   
   
-}
+// }
 
 // Uses valve logic to open valve for specific group
 void open_valve(int group){
@@ -4326,9 +4499,10 @@ void open_valve(int group){
 // Maybe add another piece of hardware that solely pulses the valves. This piece of hardware can be activated by this function or something
 void maintain_valves_open(){
   for (int i = 0; i < 4; i++){
-    if (!eeprom_object.valves[i].latching){
-      // see if duty cyclce time has passed and need to send anotehr pulse
-    }
+    // Work in Progress: Commented out to allow for compilation
+    // if (!eeprom_object.valves[i].latching){
+    //   // see if duty cyclce time has passed and need to send anotehr pulse
+    // }
   }
 }
 
@@ -4343,8 +4517,9 @@ void irrigate(){
 
   while (!group_is_done[0] || !group_is_done[1] || !group_is_done[2] || !group_is_done[3]){
     WM_irrigation_prompt(1, eeprom_object.group_irr_thresholds[0] - 5, eeprom_object.group_irr_thresholds[0], eeprom_object.last_irr_unix_time[0] - eeprom_object.min_time_btwn_irr[0] * 60, false);
-    WM_irrigation_prompt(2, WM_group2_mean, eeprom_object.group_irr_thresholds[1], eeprom_object.last_irr_unix_time[1], false);
-    WM_irrigation_prompt(3, WM_group3_mean, eeprom_object.group_irr_thresholds[2], eeprom_object.last_irr_unix_time[2], false);
+    // Work in Progress: Commented out to allow for compilation
+    // WM_irrigation_prompt(2, WM_group2_mean, eeprom_object.group_irr_thresholds[1], eeprom_object.last_irr_unix_time[1], false);
+    // WM_irrigation_prompt(3, WM_group3_mean, eeprom_object.group_irr_thresholds[2], eeprom_object.last_irr_unix_time[2], false);
     WM_irrigation_prompt(4, eeprom_object.group_irr_thresholds[0] - 2, eeprom_object.group_irr_thresholds[3], eeprom_object.last_irr_unix_time[3] - eeprom_object.min_time_btwn_irr[3] * 60, false);
   }
 
@@ -4394,24 +4569,25 @@ uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_
             Serial.println(irr_duration_ms);
             delay(50);
             if (!test_mode){
-              if (latchingValve){
+              // Work in Progress: Commented out to allow for compilation
+              // if (latchingValve){
                 
-              }
-              else{
-                // Could try 
-                if (WM_group_num == 1){
-                  digitalWrite(in1, LOW);                                //open the respective relay pin, removing power to the pump
-                }
-                else if (WM_group_num == 2){
-                  digitalWrite(in2, LOW);                                //open the respective relay pin, removing power to the pump
-                }
-                else if (WM_group_num == 3){
-                  digitalWrite(in3, LOW);                                //open the respective relay pin, removing power to the pump
-                }
-                else{
-                  digitalWrite(in4, LOW);                                //open the respective relay pin, removing power to the pump
-                }
-              }
+              // }
+              // else{
+              //   // Could try 
+              //   if (WM_group_num == 1){
+              //     digitalWrite(in1, LOW);                                //open the respective relay pin, removing power to the pump
+              //   }
+              //   else if (WM_group_num == 2){
+              //     digitalWrite(in2, LOW);                                //open the respective relay pin, removing power to the pump
+              //   }
+              //   else if (WM_group_num == 3){
+              //     digitalWrite(in3, LOW);                                //open the respective relay pin, removing power to the pump
+              //   }
+              //   else{
+              //     digitalWrite(in4, LOW);                                //open the respective relay pin, removing power to the pump
+              //   }
+              // }
               
               eeprom_object.last_irr_unix_time[WM_group_num - 1] = rtc.now().unixtime();  //reset the time of last irrigation event for that group
               new_irr_event = true;  //set boolean true to update eeprom
@@ -4445,9 +4621,10 @@ uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_
       }
     }
     else {
-      if (there is an event){
-        start irrigation //saved
-      }
+      // Work in Progress: Commented out to allow for compilation
+      // if (there is an event){
+      //   start irrigation //saved
+      // }
       // if sensors indicate the need for a watering event (for each group threshold)-----
       if (WM_group_mean < eeprom_object.group_irr_thresholds[WM_group_num-1]) {
         if (group_states[WM_group_num-1] == IDLE){
@@ -4484,23 +4661,24 @@ uint32_t WM_irrigation_prompt(int WM_group_num, int WM_group_mean, int WM_group_
             delay(50);
           }
           else{
-            if (latchingValve){
+            // Work in Progress: Commented out to allow for compilation
+            // if (latchingValve){
 
-            }
-            else{
-              if (WM_group_num == 1){
-                digitalWrite(in1, HIGH);                                   //provide power to pump on relay on respective pin
-              }
-              else if (WM_group_num == 2){
-                digitalWrite(in2, HIGH);                                   //provide power to pump on relay on respective pin
-              }
-              else if (WM_group_num == 3){
-                digitalWrite(in3, HIGH);                                   //provide power to pump on relay on respective pin
-              }
-              else {
-                digitalWrite(in4, HIGH);                                   //provide power to pump on relay on respective pin
-              }
-            }
+            // }
+            // else{
+            //   if (WM_group_num == 1){
+            //     digitalWrite(in1, HIGH);                                   //provide power to pump on relay on respective pin
+            //   }
+            //   else if (WM_group_num == 2){
+            //     digitalWrite(in2, HIGH);                                   //provide power to pump on relay on respective pin
+            //   }
+            //   else if (WM_group_num == 3){
+            //     digitalWrite(in3, HIGH);                                   //provide power to pump on relay on respective pin
+            //   }
+            //   else {
+            //     digitalWrite(in4, HIGH);                                   //provide power to pump on relay on respective pin
+            //   }
+            // }
 
             
             Serial.println(F("Pipe opened"));
