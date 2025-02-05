@@ -708,6 +708,8 @@ void charinput() {
 }
 
 void updateEEPROM() {
+  // FixMe: Include the comparator for EEPROM to not overwrite too frequently if number of events don't change
+  // Use strcmp
   eeprom_address = 0;                         //clear eeprom_address
   EEPROM.put(eeprom_address, eeprom_object);  //update chip EEPROM if there are any changes from what was saved...
   eeprom_address = 0;                         //clear eeprom_address
@@ -876,17 +878,26 @@ void setup() {
 
   // SD.remove("events.txt");
   // writeFileSD("events.txt", "Hello World");
+
+  // // Prints the file contents, useful for debugging
+  // myfile = SD.open("events.txt", FILE_READ);
+  // while (myfile.available()) {  // read file and print to Serial COM port, Note this will be slow with alot of data due to chip limitations. A desktop with a chip reader is nearly instantaneous.
+  //   Serial.write(myfile.read());
+  // }
+  // myfile.close();
+
   //test_read_and_write_events_data();
+
+  read_events_data();
+
+
   events_menu();
   write_events_data();
-  read_events_data();
   updateEEPROM();
 
   
   Serial.println("Initialization Completed");
-  // while (1){
-
-  // }
+  
   
   setRTCInterrupt();
   set_alarms(8);
@@ -895,8 +906,7 @@ void setup() {
   //events_menu();
   // The number of reads/writes on eeprom is limited, so might want to think of other ways to store information like number of events
   // The realtime clock might have some memory
-  //updateEEPROM();
-
+  updateEEPROM();
   
   //menu();
   // events menu in open_irr, continue on valve_menu and this file
@@ -909,13 +919,14 @@ void loop() {
   // Read in current windows for permit, deny, and irrigation
   
   // Reading in the data from JSON
+  // Print once events data is read successfully
   read_events_data();
 
   // Comarator to see if JSON has changed (possibly to cut down read/writes)
   // reading is free on chip but writing has a cost
   // read and write only if events have changed
   // Remove events that have been done and see if new events are there and write them
-  fill_old_events_data();
+  //fill_old_events_data();
 
   // Now we have the events array filled with predefined events
 
@@ -927,6 +938,10 @@ void loop() {
   
   events_loop();
 
+  // while (1){
+  //   Serial.println(F("Program hanging"));
+  // }
+
   // // // If rtc.now() of next irrigation event - rtc.now() < 8, then stay on, otherwise sleep
   // // open_valve(1); // saved
   // // open_valve(2);
@@ -936,10 +951,10 @@ void loop() {
   // Write current windows for permit, deny and irrigation
   //events_menu();
 
-  write_data_to_sd();
+  //write_data_to_sd();
   //set_alarm_1_interval();
   // We could compare old EEPROM data to new data using character array like we did for the events data
-  updateEEPROM();
+  //updateEEPROM();
   Low_Power_Sleep();
 }
 
@@ -3069,7 +3084,10 @@ void Set_ALARM_1_Interval() {
 // States: IRRIGATING_S(sensor based irrigation), IRRIGATING_M(measurement based irrigation), 
 void events_loop(){
   
+  check_for_singular_events();
   // Check match fields
+  //check_for_sensor_based_irrigation();
+  // Test a sensor measurement event everyday where seconds is 15
   // If sensor based irrigation needs to occur for certain group, schedule singular events to do so
   // Can have custom calcualtions for event span based on various factors
   // Add these events to queue
@@ -3486,6 +3504,7 @@ void read_valve_data(){
 }
 
 void write_valve_data(){
+  // FixMe: If valve array hasn't changed, don't write anything to SD card
   Serial.println(F("Writing valve data to file."));
   StaticJsonDocument<10000> valveDoc;
 
@@ -3547,12 +3566,26 @@ void events_menu() {
   Serial.println(F("4    <-     Remove All Events From Schedule"));
   Serial.println(F("5    <-     Clear Match Fields"));
   Serial.println(F("6    <-     Emergency Clear SD"));
+  Serial.println(F("7    <-     Exit Events Menu"));
 
-  get_integer_input();  //from existing code using global int "indata"
+  
 
   delay(100);
 
-  if (indata == 1 || indata == 3) {
+  int menu_timeout = millis() + 10000; 
+  int menu_input = -1;
+  while (millis() < menu_timeout) {
+    if (Serial.available() > 0) {
+      get_integer_input();  //from existing code using global int "indata"
+      menu_input = indata;
+      break;
+    }
+  }
+  if (menu_input == -1){
+    return;
+  }
+
+  if (menu_input == 1 || menu_input == 3) {
     Serial.println(F("Scheduled Events: "));
     //print from timeEvaluation scheduled event Array (DateTime objects) with array indicies
     print_all_events();
@@ -3563,7 +3596,7 @@ void events_menu() {
     //will also need to print from the oldEvent global instance to show the matchFields for measurement
     // TODO
     //print_measurement_interval_details();
-    if (indata == 3) {
+    if (menu_input == 3) {
       Serial.println(F("Enter the index number of scheduled event to remove."));
       get_integer_input();
       remove_event(indata);
@@ -3571,18 +3604,26 @@ void events_menu() {
       print_all_events();
     }
   }
-  else if (indata == 2) {
+  else if (menu_input == 2) {
     event_scheduler_menu();
   }
-  else if (indata == 4){
+  else if (menu_input == 4){
     remove_all_events();
   }
-  else if (indata == 5){
+  else if (menu_input == 5){
     clear_match_fields();
   }
-  else if (indata == 5){
+  else if (menu_input == 5){
     clear_sd();
   }
+  else if (menu_input == 7){
+    return;
+  }
+  events_menu();
+  // FixMe: give user specified amount of time before exiting
+  // If completed one option, the user is moved back to the top of the menu
+  // Check Node
+  // Default option is to allow users to go back through menu
 }
 
 void event_scheduler_menu(){
@@ -4034,10 +4075,15 @@ void remove_all_events(){
 // Can compare 2 buffers or boolean to see if change
 void read_events_data(){
   Serial.println(F("Reading in events data from file."));
-  StaticJsonDocument<10000> eventsLog;
+  StaticJsonDocument<1048> eventsLog;
   File events_file = SD.open("events.txt", FILE_READ);
-  char buf[10000];
-  events_file.read(buf, 10000);
+  if (!events_file){
+    Serial.println(F("File does not exist, nothing was read."));
+    return;
+  }
+  char buf[1048];
+  events_file.read(buf, 1048);
+  events_file.close();
   // Serial.println(buf);
   DeserializationError error = deserializeJson(eventsLog, buf);
 
@@ -4046,6 +4092,8 @@ void read_events_data(){
     Serial.println(error.f_str());
     return;
   }
+
+  deserializeJson(eventsLog, temp_json_data);
   JsonArray eventsArray = eventsLog["eventsArray"].as<JsonArray>(); //saved
 
   int i = 0;
@@ -4074,41 +4122,42 @@ void read_events_data(){
   // }
 }
 
-void fill_old_events_data(){
-  StaticJsonDocument<10000> eventsLog;
-  // jsonBuffer.clear() or eventsLog.clear()
-  JsonArray eventsArray = eventsLog.createNestedArray("eventsArray");
-  for (int i = 0; i < eeprom_object.num_events; i++){
-    //events[i]->print();
-    JsonObject event = eventsArray.createNestedObject();
-    JsonArray groups = event.createNestedArray("groups");
-    //event["groups"] = events[i]->groups;
-    // Work in Progress: Commented out to allow for compilation
-    // for (int j = 0; j < 4; j++){
-    //   groups.add(events[i]->group[j]);
-    // }
-    event["recurring"] = events[i]->recurring;
-    event["event_type"] = events[i]->event_type;
-    event["start_span_seconds"] = events[i]->span[0]->unixtime();
-    event["end_span_seconds"] = events[i]->span[1]->unixtime();
-  }
+// void fill_old_events_data(){
+//   StaticJsonDocument<10000> eventsLog;
+//   // jsonBuffer.clear() or eventsLog.clear()
+//   JsonArray eventsArray = eventsLog.createNestedArray("eventsArray");
+//   for (int i = 0; i < eeprom_object.num_events; i++){
+//     //events[i]->print();
+//     JsonObject event = eventsArray.createNestedObject();
+//     JsonArray groups = event.createNestedArray("groups");
+//     for (int j = 0; j < 4; j++){
+//       groups.add(events[i]->group[j]);
+//     }
+//     event["recurring"] = events[i]->recurring;
+//     event["event_type"] = events[i]->event_type;
+//     event["start_span_seconds"] = events[i]->span[0]->unixtime();
+//     event["end_span_seconds"] = events[i]->span[1]->unixtime();
+//   }
 
-  Serial.print(F("Saving new Event as Json..."));
-  // Serial.println();
-  serializeJson(eventsLog, temp_json_data);  //copy the info in the buffer to the array to use writeFile below
-}
+//   Serial.print(F("Saving new Event as Json..."));
+//   serializeJson(eventsLog, temp_json_data);  //copy the info in the buffer to the array to use writeFile below
+// }
 
 void write_events_data(){
+  if (eeprom_object.num_events == 0){
+    Serial.print(F("No events currently scheduled, file was not written."));
+    return;
+  }
+  // FixMe: If events array hasn't changed, don't write anything to SD card
   SD.remove("events.txt");
   delay(10);
-  StaticJsonDocument<10000> eventsLog;
+  StaticJsonDocument<1048> eventsLog;
   // jsonBuffer.clear() or eventsLog.clear()
   JsonArray eventsArray = eventsLog.createNestedArray("eventsArray");
   for (int i = 0; i < eeprom_object.num_events; i++){
     events[i]->print();
     JsonObject event = eventsArray.createNestedObject();
     JsonArray groups = event.createNestedArray("groups");
-    event["groups"] = events[i]->groups;
     for (int j = 0; j < 4; j++){
       groups.add(events[i]->groups[j]);
     }
@@ -4117,24 +4166,30 @@ void write_events_data(){
     event["start_span_seconds"] = events[i]->span[0]->unixtime();
     event["end_span_seconds"] = events[i]->span[1]->unixtime();
   }
-  char json_array[10000];  // char array large enough
+  char json_array[1048];  // char array large enough
   Serial.print(F("Saving new Event as Json..."));
   serializeJson(eventsLog, json_array);  //copy the info in the buffer to the array to use writeFile below
+  if (!strcmp(json_array, temp_json_data)){
+    Serial.println(F("No changes in events data, nothing printed to file"));
+    return;
+  }
   serializeJson(eventsLog, Serial);
   
   
   //File f = SD.open("events.txt", FILE_WRITE);
   //serializeJson(eventsLog, f);
+  //writeFileSD("events.txt", "Hello World!");
   writeFileSD("events.txt", json_array);  //filename limit of 13 chars
+  
   //eventsArray.printTo(Serial);
   //serializeJsonPretty(eventsLog, Serial);
 
   // Prints the file contents, useful for debugging
-  myfile = SD.open("events.txt", FILE_READ);
-  while (myfile.available()) {  // read file and print to Serial COM port, Note this will be slow with alot of data due to chip limitations. A desktop with a chip reader is nearly instantaneous.
-    Serial.write(myfile.read());
-  }
-  myfile.close();
+  // myfile = SD.open("events.txt", FILE_READ);
+  // while (myfile.available()) {  // read file and print to Serial COM port, Note this will be slow with alot of data due to chip limitations. A desktop with a chip reader is nearly instantaneous.
+  //   Serial.write(myfile.read());
+  // }
+  // myfile.close();
 }
 
 void test_read_and_write_events_data(){
@@ -4266,6 +4321,8 @@ bool check_match_fields(DateTime d){
   for (int i = 0; i < 3; i++){
     for (int j = 0; j < eeprom_object.numFields[i]; j++){
       if (eeprom_object.matchFields[i][j] == currentFields[i]){
+
+        // FixMe: Print out time from RTC and the match field
         Serial.println("Found match, showing comaprison");
         Serial.println(eeprom_object.matchFields[i][j]);
         Serial.println(currentFields[i]);
