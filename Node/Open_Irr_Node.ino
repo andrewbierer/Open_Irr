@@ -590,7 +590,7 @@ void irrigate() {
 
 //-----Read Watermark Sensors---------------------------------------
 void read_watermark() {
-  //Declare volatile variables for function
+  //Declare vars
   const int num_Iter = 3;              //Define number of iterations. Each is actually two reads of the sensor (both directions)
   long TempC = Temp;                   //Pull average temperature sensor from ds18b20 for time being until each temperature sensor can be attributed to a single or group of watermark sensors
   const long open_resistance = 35000;  //For throwing fault 255, default was 35000
@@ -609,6 +609,7 @@ void read_watermark() {
     number_WM_Cal_resistor_offset = eeprom_object.num_WM;
   }
 
+
   int WM_case;     //for describing what happens to the watermark readings based on the resistance
   int WM1_CB = 0;  //Holder for WM sensor value in CB/kPa, direction 1
   int WM2_CB = 0;  //Holder for WM sensor value in CB/kPa, direction 2
@@ -619,10 +620,10 @@ void read_watermark() {
   double ARead_path1 = 0;  //The raw analog read value obtained in direction 1.
   double ARead_path2 = 0;  //The raw analog read value obtained in direction 2.
 
-  float SupplyV = 3.3;  //If using a different logic board (3.3V vs. 5V etc) moteino mega is ~3.3v.
+  float SupplyV = 3.3;  //If using a different logic board (3.3V vs. 5V etc) moteino mega is ~3.3v. //In the future it may be desirable to store energy in a capacitor instead of relying on instant moteino board power.
 
   //Code-----
-  ARead_path1 = 0;  //Reset these analog value trackers each loop
+  ARead_path1 = 0;  //Reset these values on the loop
   ARead_path2 = 0;
 
   if (eeprom_object.calibration_resistor_present == true) {  //Read the calibration resistor IF included. There is no polarity swap needed here
@@ -636,7 +637,7 @@ void read_watermark() {
       delay(0.09);                                    //wait 90 micro seconds and take sensor read
       ARead_path1 += analogRead(WM_analog_read_pin);  //read the analog pin the multiplexor is connected to (Moteino Mega 10bit ADC)
       digitalWrite(WM_path1, LOW);                    //set the excitation voltage to OFF/LOW
-      delay(100);                                     //0.1 second delay before moving to next channel or switching MUX for signal clarity
+      delay(100);                                     //0.1 second delay before moving to next channel or switching MUX
     }
     digitalWrite(mux_enable, HIGH);                                                                                                             //Disable mulitplexor
     SenV10K = ((ARead_path1 / 1024.0f) * SupplyV) / (num_Iter);                                                                                 //get the average of the number of readings and convert to volts, 1024 here for 10bit ADC
@@ -649,20 +650,23 @@ void read_watermark() {
     Serial.println(Calib_Resistance);
     Serial.print(F("Raw Sum of Analog Reads:  "));
     Serial.println(ARead_path1);
-    delay(100);                                       //0.1 second wait before moving to next channel or switching MUX
+    delay(100);  //0.1 second wait before moving to next channel or switching MUX
   } else {
     Serial.println(F("Calibration Factor defaulting to 1. Insert and specify a fixed resistor for calculating a calibration factor."));
-    Calib_Resistance = 1;                             //if a calibration resistor is not present, assume a factor of 1.0
-    digitalWrite(mux_enable, HIGH);                   //Disable mux pair
+    Calib_Resistance = 1;            //if not actually calculated, assume 1
+    digitalWrite(mux_enable, HIGH);  //Disable mux pair
   }
-  for (int i = 0; i < number_WM_Cal_resistor_offset; i++) {  //Num_WM starts at mux channel 0 and increments, i.e. if num_WM = 4, i=0,1,2,3
-    ARead_path1 = 0;                                         //restore trackers to 0 for successive WM readings
+  for (int i = 0; i < number_WM_Cal_resistor_offset; i++) {  //Assuming num_WM starts at mux channel 0 and increments, i.e. if num_WM = 4, i=0,1,2,3
+    ARead_path1 = 0;                                //restore values to 0 for successive WM readings
     ARead_path2 = 0;
 
-    for (int n = 0; n < num_Iter; n++) {              //take num_Iter readings from mux channel i
-      digitalWrite(mux_enable, LOW);                  // enable the MUX
+    //8/2/2023 Need to account for when a Calibration Resistor is installed. The for statement above used to read i < eeprom_object.num_WM
+
+
+    for (int n = 0; n < num_Iter; n++) {  //take num_Iter readings from mux channel i
+      digitalWrite(mux_enable, LOW);      // enable the MUX
       delay(100);
-      mux_1.channel(i);                               //Select mux channel from i in for loop referenceing num_WM above
+      mux_1.channel(i);  //Select mux channel from i in for loop referenceing num_WM above
       delay(10);
       digitalWrite(WM_path1, HIGH);                   //set signal pin of mux 1 (pin7) high
       delay(0.09);                                    //Wait 90 microseconds
@@ -677,17 +681,17 @@ void read_watermark() {
       ARead_path2 += analogRead(WM_analog_read_pin);  //read the signal from the opposite direction and add to running total
       digitalWrite(WM_path2, LOW);                    //set pin low
     }
-    SenVWM1 = ((ARead_path1 / 1024.0f) * SupplyV) / (num_Iter);  //get the average of the readings in the first direction and convert to volts | 1024 because Moteino Mega has a 10bit analog digital converter
+    SenVWM1 = ((ARead_path1 / 1024.0f) * SupplyV) / (num_Iter);  //get the average of the readings in the first direction and convert to volts | 1024 because 10bit adc
     SenVWM2 = ((ARead_path2 / 1024.0f) * SupplyV) / (num_Iter);  //get the average of the readings in the second direction and convert to volts
 
     double WM1_ResistanceA = ((eeprom_object.fixed_resistor_val * (SupplyV - SenVWM1) / SenVWM1) - mux_resistance);  //do the voltage divider math, using the the known resistor in the circuit
     double WM1_ResistanceB = eeprom_object.fixed_resistor_val * SenVWM2 / (SupplyV - SenVWM2) - mux_resistance;      //voltage divider math, opposite direction
 
-    double WM1_Resistance = ((WM1_ResistanceA + WM1_ResistanceB) / 2) * Calib_Resistance;  //Average of the directions and apply calibration factor from fixed resistor
+    double WM1_Resistance = ((WM1_ResistanceA + WM1_ResistanceB) / 2) * Calib_Resistance;  //Average of the directions and apply calibration factor
     digitalWrite(mux_enable, HIGH);                                                        //Disable mux pair
     delay(100);
 
-    //Troubleshooting considerations
+    //Troubleshooting consideration
     if (eeprom_object.run_notes) {
       Serial.print(F("ARead_path1:  "));
       Serial.println(ARead_path1);
@@ -705,7 +709,8 @@ void read_watermark() {
       Serial.println(WM1_Resistance);
     }
 
-    //-------Conversion of Resistance to centibars/kilopascals, 6 cases plus faults, equations sourced from Watermark Sensor Manufacturer, Irrometer. 
+
+    //-------Conversion of Resistance to centibars/kilopascals, 6 cases plus faults, equations from manufacturer
     if (WM1_Resistance > 550.00) {
       if (WM1_Resistance > 8000.00) {
         WM_case = 1;
@@ -758,8 +763,7 @@ void read_watermark() {
         break;
     }
 
-    //July 2023, observation of some sensors returning positive kPa values (should be impossible by falling into one of the above cases), tuning of constants seems to be needed for correction.
-    //For now, readings above 0 default to 0. 
+    //July 2023, we are observing some sensors returning positive kPa values (should be impossible by falling into one of the above cases, but tuning seems to be required for the constants)
     if (WM1_CB > 0) {
       WM1_CB = 0;
       eeprom_object.error_log.wm_struct.mux_channel_error[i] = true;
